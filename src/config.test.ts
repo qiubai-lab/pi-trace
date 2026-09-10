@@ -23,6 +23,14 @@ describe("recording configuration", () => {
     await expect(store.load()).rejects.toThrow(/unsupported.*2/i);
   });
 
+  it("exposes a revision that changes for same-value concurrent writes", async () => {
+    const store = new RecordingConfigStore(await home());
+    await store.setEnabled(false);
+    const first = await store.revision();
+    await store.setEnabled(false);
+    expect(await store.revision()).not.toBe(first);
+  });
+
   it("observes changes without requiring a Pi reload", async () => {
     const store = new RecordingConfigStore(await home());
     const changes: boolean[] = [];

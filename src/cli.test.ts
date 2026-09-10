@@ -70,31 +70,41 @@ describe("qb-trace CLI", () => {
     )).toBe(0);
     expect(fx.out.join("\n")).toContain("matched events: 1");
     expect(await runCli(["prune", "--all", "--dry-run"], fx.io, { QB_TRACE_HOME: fx.home })).toBe(0);
+    expect((await new RecordingConfigStore(fx.home).load()).enabled).toBe(true);
+    const afterDryRun = new TraceStore(join(fx.home, "traces.sqlite"), { readOnly: true });
+    expect(afterDryRun.listControls()).toHaveLength(1);
+    afterDryRun.close();
+
     expect(await runCli(
-      ["prune", "--older-than", "1h", "--vacuum"],
+      ["prune", "--older-than", "1h"],
       fx.io,
       { QB_TRACE_HOME: fx.home },
-      { pruneGraceMs: 0, compactDatabase },
-    )).not.toBe(0);
-    expect(compactDatabase).not.toHaveBeenCalled();
-
-    expect(await runCli(["off"], fx.io, { QB_TRACE_HOME: fx.home })).toBe(0);
-    expect(await runCli(["prune", "--older-than", "1h"], fx.io, { QB_TRACE_HOME: fx.home }, { pruneGraceMs: 0 })).toBe(0);
+      {
+        pruneGraceMs: 1,
+        sleep: async () => { expect((await new RecordingConfigStore(fx.home).load()).enabled).toBe(false); },
+        compactDatabase,
+      },
+    )).toBe(0);
+    expect(compactDatabase).toHaveBeenCalledTimes(1);
+    expect(fx.out.join("\n")).toContain("vacuum: complete");
+    expect(fx.out.join("\n")).toContain("recording: temporarily paused");
+    expect(fx.out.join("\n")).toContain("recording: restored on");
     const check = new TraceStore(join(fx.home, "traces.sqlite"), { readOnly: true });
     expect(check.listEvents("s").map(event => event.eventType)).toEqual(["new"]);
-    expect(check.listControls()).toHaveLength(2);
+    expect(check.listControls().map(control => control.enabled)).toEqual([1, 0, 1]);
+    expect(check.listControls().slice(1).every(control => control.source === "qb-trace-cli:prune")).toBe(true);
     check.close();
-    expect((await new RecordingConfigStore(fx.home).load()).enabled).toBe(false);
+    expect((await new RecordingConfigStore(fx.home).load()).enabled).toBe(true);
     expect((await diagnostics.load()).storageErrors).toBe(1);
     expect(fx.out.join("\n")).toContain("deleted events: 1");
     expect(fx.out.join("\n")).toContain("deleted payload bytes: 22");
     expect(fx.out.join("\n")).toContain("remaining events: 1");
   });
 
-  it("rechecks recording state after the prune grace period", async () => {
+  it("preserves a concurrent explicit off written after automatic pause", async () => {
     const fx = await fixture();
     const config = new RecordingConfigStore(fx.home);
-    await config.setEnabled(false);
+    await config.setEnabled(true);
     const store = new TraceStore(join(fx.home, "traces.sqlite"));
     store.append([new CorrelationState("grace-prune").envelope("event", {}, { sessionId: "s" })]);
     store.close();
@@ -103,29 +113,64 @@ describe("qb-trace CLI", () => {
       ["prune", "--all"],
       fx.io,
       { QB_TRACE_HOME: fx.home },
-      { pruneGraceMs: 1, sleep: async () => { await config.setEnabled(true); } },
+      {
+        pruneGraceMs: 1,
+        sleep: async () => {
+          expect((await config.load()).enabled).toBe(false);
+          await config.setEnabled(false);
+        },
+        compactDatabase: vi.fn(),
+      },
+    );
+    expect(code).toBe(0);
+    expect((await config.load()).enabled).toBe(false);
+    expect(fx.out.join("\n")).toMatch(/recording: concurrent change preserved \(off\)/i);
+    const check = new TraceStore(join(fx.home, "traces.sqlite"), { readOnly: true });
+    expect(check.countEvents()).toBe(0);
+    check.close();
+  });
+
+  it("aborts prune and preserves a concurrent on written during the grace period", async () => {
+    const fx = await fixture();
+    const config = new RecordingConfigStore(fx.home);
+    await config.setEnabled(true);
+    const store = new TraceStore(join(fx.home, "traces.sqlite"));
+    store.append([new CorrelationState("concurrent-on").envelope("event", {}, { sessionId: "s" })]);
+    store.close();
+    const compactDatabase = vi.fn();
+
+    const code = await runCli(
+      ["prune", "--all"],
+      fx.io,
+      { QB_TRACE_HOME: fx.home },
+      { pruneGraceMs: 1, sleep: async () => { await config.setEnabled(true); }, compactDatabase },
     );
     expect(code).not.toBe(0);
+    expect(compactDatabase).not.toHaveBeenCalled();
+    expect((await config.load()).enabled).toBe(true);
+    expect(fx.out.join("\n")).toMatch(/recording: concurrent change preserved \(on\)/i);
     const check = new TraceStore(join(fx.home, "traces.sqlite"), { readOnly: true });
     expect(check.countEvents()).toBe(1);
     check.close();
   });
 
-  it("reports deletion as committed when optional vacuum fails", async () => {
+  it("reports deletion as committed when default vacuum fails", async () => {
     const fx = await fixture();
-    await new RecordingConfigStore(fx.home).setEnabled(false);
+    await new RecordingConfigStore(fx.home).setEnabled(true);
     const store = new TraceStore(join(fx.home, "traces.sqlite"));
     store.append([new CorrelationState("vacuum-prune").envelope("event", {}, { sessionId: "s" })]);
     store.close();
 
     const code = await runCli(
-      ["prune", "--all", "--vacuum"],
+      ["prune", "--all"],
       fx.io,
       { QB_TRACE_HOME: fx.home },
       { pruneGraceMs: 0, compactDatabase: () => { throw new Error("vacuum blocked"); } },
     );
     expect(code).not.toBe(0);
     expect(fx.err.join("\n")).toMatch(/events were deleted.*vacuum blocked/i);
+    expect((await new RecordingConfigStore(fx.home).load()).enabled).toBe(true);
+    expect(fx.out.join("\n")).toContain("recording: restored on");
     const check = new TraceStore(join(fx.home, "traces.sqlite"), { readOnly: true });
     expect(check.countEvents()).toBe(0);
     check.close();

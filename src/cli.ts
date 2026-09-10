@@ -29,7 +29,8 @@ function parsePruneArguments(args: string[], now: number): PruneArguments {
   let selector: "older" | "all" | undefined;
   let beforeTimestampMs: number | undefined;
   let dryRun = false;
-  let vacuum = false;
+  const vacuum = true;
+  let vacuumFlagSeen = false;
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
     if (argument === "--older-than") {
@@ -49,8 +50,8 @@ function parsePruneArguments(args: string[], now: number): PruneArguments {
       if (dryRun) throw new Error("duplicate --dry-run");
       dryRun = true;
     } else if (argument === "--vacuum") {
-      if (vacuum) throw new Error("duplicate --vacuum");
-      vacuum = true;
+      if (vacuumFlagSeen) throw new Error("duplicate --vacuum");
+      vacuumFlagSeen = true;
     } else {
       throw new Error(`unknown prune argument: ${argument ?? ""}`);
     }
@@ -129,50 +130,94 @@ async function prune(
   }
 
   const config = new RecordingConfigStore(paths.config, true);
-  if ((await config.load()).enabled) {
-    io.stderr("prune refused: recording is on; run qb-trace off first");
-    return 1;
-  }
-  const graceMs = runtime.pruneGraceMs ?? 2_500;
-  if (graceMs > 0) await (runtime.sleep ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))))(graceMs);
-  if ((await config.load()).enabled) {
-    io.stderr("prune refused: recording was enabled during the shutdown grace period");
-    return 1;
-  }
-  if (!existsSync(paths.database)) {
-    reportPrune(io, { matchedEvents: 0, payloadBytes: 0, remainingEvents: 0, beforeSize, afterSize: beforeSize }, false);
-    return 0;
+  const initiallyEnabled = (await config.load()).enabled;
+  let automaticPauseRevision: string | undefined;
+  if (initiallyEnabled) {
+    await config.setEnabled(false);
+    try {
+      automaticPauseRevision = await config.revision();
+    } catch (error) {
+      await config.setEnabled(true);
+      throw error;
+    }
+    io.stdout("recording: temporarily paused");
   }
 
-  const store = new TraceStore(paths.database, { timeoutMs: 2_000 });
-  let deleted: ReturnType<TraceStore["pruneEvents"]>;
-  let compactError: unknown;
   try {
-    deleted = store.pruneEvents(parsed.beforeTimestampMs);
-    if (parsed.vacuum) {
+    const graceMs = runtime.pruneGraceMs ?? 2_500;
+    if (graceMs > 0) await (runtime.sleep ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))))(graceMs);
+    if ((await config.load()).enabled) {
+      io.stderr("prune aborted: recording was enabled during the shutdown grace period");
+      return 1;
+    }
+    if (!existsSync(paths.database)) {
+      reportPrune(io, { matchedEvents: 0, payloadBytes: 0, remainingEvents: 0, beforeSize, afterSize: beforeSize }, false);
+      return 0;
+    }
+
+    const store = new TraceStore(paths.database, { timeoutMs: 2_000 });
+    let deleted: ReturnType<TraceStore["pruneEvents"]>;
+    let compactError: unknown;
+    try {
+      if (initiallyEnabled) store.appendControl(false, "qb-trace-cli:prune");
+      deleted = store.pruneEvents(parsed.beforeTimestampMs);
+      if (parsed.vacuum) {
+        try {
+          (runtime.compactDatabase ?? (target => target.checkpointAndVacuum()))(store);
+        } catch (error) {
+          compactError = error;
+        }
+      }
+    } finally {
+      store.close();
+    }
+    const afterSize = traceDatabaseSize(paths.database);
+    reportPrune(io, {
+      matchedEvents: deleted.deletedEvents,
+      payloadBytes: deleted.deletedPayloadBytes,
+      remainingEvents: deleted.remainingEvents,
+      beforeSize,
+      afterSize,
+    }, false);
+    if (parsed.vacuum) io.stdout(`vacuum: ${compactError ? "failed" : "complete"}`);
+    if (compactError) {
+      io.stderr(`events were deleted, but database compaction failed: ${errorText(compactError)}`);
+      return 1;
+    }
+    return 0;
+  } finally {
+    if (initiallyEnabled && automaticPauseRevision) {
+      let currentRevision: string;
+      let currentEnabled: boolean;
       try {
-        (runtime.compactDatabase ?? (target => target.checkpointAndVacuum()))(store);
+        currentRevision = await config.revision();
+        currentEnabled = (await config.load()).enabled;
       } catch (error) {
-        compactError = error;
+        io.stderr(`recording state could not be verified after prune: ${errorText(error)}`);
+        throw error;
+      }
+      if (currentRevision === automaticPauseRevision) {
+        try {
+          await config.setEnabled(true);
+        } catch (error) {
+          io.stderr(`recording could not be restored; run qb-trace on: ${errorText(error)}`);
+          throw error;
+        }
+        io.stdout("recording: restored on");
+        if (existsSync(paths.database)) {
+          try {
+            const audit = new TraceStore(paths.database, { timeoutMs: 2_000 });
+            try { audit.appendControl(true, "qb-trace-cli:prune"); } finally { audit.close(); }
+          } catch (error) {
+            io.stderr(`recording was restored, but its audit boundary could not be stored: ${errorText(error)}`);
+            throw error;
+          }
+        }
+      } else {
+        io.stdout(`recording: concurrent change preserved (${currentEnabled ? "on" : "off"})`);
       }
     }
-  } finally {
-    store.close();
   }
-  const afterSize = traceDatabaseSize(paths.database);
-  reportPrune(io, {
-    matchedEvents: deleted.deletedEvents,
-    payloadBytes: deleted.deletedPayloadBytes,
-    remainingEvents: deleted.remainingEvents,
-    beforeSize,
-    afterSize,
-  }, false);
-  if (parsed.vacuum) io.stdout(`vacuum: ${compactError ? "failed" : "complete"}`);
-  if (compactError) {
-    io.stderr(`events were deleted, but database compaction failed: ${errorText(compactError)}`);
-    return 1;
-  }
-  return 0;
 }
 
 async function status(io: CliIO, env: NodeJS.ProcessEnv): Promise<number> {

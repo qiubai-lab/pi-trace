@@ -21,7 +21,7 @@ Dependencies point from entry adapters toward these capability modules. Modules 
 
 ## Stable data contract
 
-The default global home remains `~/.pi/agent/qb-trace/`. SQLite is the sole authoritative Trace store, uses WAL and schema 1, and is shared across Sessions and Runtime processes. Recording is append-only and fail-open. The collector retains the complete callback-visible payload without plugin-level redaction or truncation and never performs automatic retention. Explicit CLI pruning may transactionally delete selected `trace_events` only while recording is off; recording controls, configuration and diagnostics remain outside that deletion boundary.
+The default global home remains `~/.pi/agent/qb-trace/`. SQLite is the sole authoritative Trace store, uses WAL and schema 1, and is shared across Sessions and Runtime processes. Recording is append-only and fail-open. The collector retains the complete callback-visible payload without plugin-level redaction or truncation and never performs automatic retention. Explicit CLI pruning may temporarily set recording off, wait for runtime propagation, transactionally delete selected `trace_events`, then checkpoint WAL and vacuum storage by default. It conditionally restores the original on state without overwriting a concurrent config write. Recording controls, configuration and diagnostics remain outside the deletion boundary.
 
 ## Verification entrypoints
 

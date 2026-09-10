@@ -1,4 +1,4 @@
-import { chmod, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface RecordingConfig {
@@ -37,6 +37,11 @@ export class RecordingConfigStore {
     const config: RecordingConfig = { schemaVersion: 1, enabled };
     await this.save(config);
     return config;
+  }
+
+  async revision(): Promise<string> {
+    const metadata = await stat(this.path, { bigint: true });
+    return `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeNs}`;
   }
 
   async save(config: RecordingConfig): Promise<void> {

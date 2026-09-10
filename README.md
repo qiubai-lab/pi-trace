@@ -72,7 +72,7 @@ qb-trace off      # 停止新增事件，不删除历史数据
 qb-trace status   # 显示路径、schema、大小、事件数、错误和数据缺口
 qb-trace prune --older-than 30d --dry-run  # 预览删除范围
 qb-trace prune --older-than 30d            # 删除 30 天前的事件
-qb-trace prune --all --vacuum              # 删除全部事件并回收磁盘空间
+qb-trace prune --all                       # 删除全部事件并回收磁盘空间
 qb-trace server   # V1 未实现，明确报错并返回非零退出码
 ```
 
@@ -80,9 +80,9 @@ qb-trace server   # V1 未实现，明确报错并返回非零退出码
 
 ### 手动清理
 
-`prune` 必须明确指定 `--older-than <Nh|Nd>` 或 `--all`，二者不能同时使用。`--dry-run` 只报告匹配事件、payload 大小和剩余数量，在 recording 开启时也可使用。实际删除前必须先运行 `qb-trace off`；命令会等待短暂的传播和队列刷新窗口，并在窗口后再次确认 recording 仍为关闭。
+`prune` 必须明确指定 `--older-than <Nh|Nd>` 或 `--all`，二者不能同时使用。`--dry-run` 只报告匹配事件、payload 大小和剩余数量，不改变 recording。实际 prune 如果发现 recording 为开启，会自动暂时关闭，等待运行实例停止接收并刷新队列，删除和压缩完成后再恢复开启；无需手工执行 `qb-trace off/on`。如果等待期间其他进程或用户显式更改了 recording 状态，prune 不会覆盖该决定，并会报告最终保留的状态。
 
-Prune 只删除 `trace_events`，不会删除 `recording_controls`、`config.json` 或 `diagnostics/`。删除在一个事务内完成。普通删除释放的 SQLite 页面可供后续写入复用，但主文件不一定缩小；显式添加 `--vacuum` 才会 checkpoint WAL 并执行 `VACUUM`。`VACUUM` 需要额外临时磁盘和独占访问。如果删除已经提交但压缩失败，命令会明确报告部分成功并返回非零状态；此时不要在未检查范围的情况下重复执行更宽泛的 prune。
+Prune 只删除 `trace_events`，不会删除 `recording_controls`、`config.json` 或 `diagnostics/`。自动暂停和恢复会以 `qb-trace-cli:prune` 来源写入开关审计。删除在一个事务内完成；每次实际 prune 成功后都会默认 checkpoint WAL 并执行 `VACUUM` 以缩小主文件。旧脚本中的 `--vacuum` 仍兼容，但不再是启用压缩的必要条件。`VACUUM` 需要额外临时磁盘和独占访问。如果删除已经提交但压缩失败，命令会明确报告部分成功并返回非零状态，同时仍会尝试恢复原 recording 状态；此时不要在未检查范围的情况下重复执行更宽泛的 prune。
 
 默认数据目录：
 
