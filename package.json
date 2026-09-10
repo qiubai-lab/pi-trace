@@ -1,0 +1,42 @@
+{
+  "name": "@qiubai-lab/pi-trace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local, loss-aware execution tracing for Pi",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/qiubai-lab/pi-trace.git"
+  },
+  "keywords": [
+    "pi-package",
+    "observability",
+    "tracing"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "qb-trace": "bin/qb-trace"
+  },
+  "scripts": {
+    "install:cli": "./scripts/install-qb-trace-cli.sh",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9"
+  }
+}

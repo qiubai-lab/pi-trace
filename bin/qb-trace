@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+SELF=$0
+if [ -L "$SELF" ]; then
+  LINK_TARGET=$(readlink "$SELF")
+  case "$LINK_TARGET" in
+    /*) SELF=$LINK_TARGET ;;
+    *) SELF=$(dirname "$SELF")/$LINK_TARGET ;;
+  esac
+fi
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$SELF")" && pwd)
+PACKAGE_ROOT=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
+exec node --no-warnings=ExperimentalWarning "$PACKAGE_ROOT/src/cli-entry.ts" "$@"

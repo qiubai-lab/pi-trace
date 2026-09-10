@@ -1,1 +1,126 @@
 # pi-trace
+
+`@qiubai-lab/pi-trace` 是独立的 Pi 本地执行追踪 package。它默认关闭；开启后监听 Pi 公共扩展 API 暴露的 Session、Agent、Turn、Provider、消息、thinking、工具、compaction 和 tree 生命周期，并把完整可观察 payload 追加到一个 SQLite WAL 数据库。
+
+采集不依赖 Web Server，不注册 Pi Slash Command。V1 的 `qb-trace server` 仅保留命令和只读查询边界，尚未实现 HTTP API 或 Web UI。
+
+## 要求
+
+- Linux 或 macOS
+- Node.js 22.19 或更新版本
+- `~/.local/bin` 已加入 `PATH`
+
+## 安装 Pi package
+
+从 GitHub 安装到个人 Pi 配置：
+
+```sh
+pi install https://github.com/qiubai-lab/pi-trace.git
+pi list
+```
+
+本地开发安装：
+
+```sh
+pi install /root/projects/pi-trace
+```
+
+也可以不修改设置，仅加载当前工作区：
+
+```sh
+pi -ne -e /root/projects/pi-trace
+```
+
+## 安装独立命令
+
+进入 `pi list` 显示的实际 package 目录，然后执行：
+
+```sh
+npm run install:cli
+```
+
+脚本创建以下用户级链接：
+
+```text
+~/.local/bin/qb-trace -> <pi-trace-package-root>/bin/qb-trace
+```
+
+重复执行是幂等的。脚本只会覆盖自己已有的链接，或迁移旧版 `*/pi-plugins/bin/qb-trace` 链接；其他文件和符号链接一律拒绝覆盖。
+
+开发仓库中也可以直接运行：
+
+```sh
+./bin/qb-trace status
+```
+
+## 从 pi-plugins 迁移
+
+1. 关闭所有正在运行的 Pi 实例，避免旧、新扩展同时加载并产生重复事件。
+2. 更新或移除包含旧 QB Trace 的 `pi-plugins` 安装。
+3. 单独安装 `pi-trace`：`pi install https://github.com/qiubai-lab/pi-trace.git`。
+4. 在新 package 目录执行 `npm run install:cli`；安装器会安全地迁移原 `pi-plugins` CLI 链接。
+5. 运行 `qb-trace status`，确认原开关、数据库、schema 和事件数量仍可读取。
+6. 启动 Pi。原 Trace 数据无需复制或重建。
+
+迁移不会修改或删除 `~/.pi/agent/qb-trace/`。如果旧 package 仍配置为加载 QB Trace，请不要同时启动新 package。
+
+## 使用
+
+```sh
+qb-trace on       # 开启所有已加载 pi-trace 的当前及后续 Pi 实例
+qb-trace off      # 停止新增事件，不删除历史数据
+qb-trace status   # 显示路径、schema、大小、事件数、错误和数据缺口
+qb-trace server   # V1 未实现，明确报错并返回非零退出码
+```
+
+运行中的 Pi 实例会在两秒内感知 `on/off`，无需 reload。独立 CLI 不要求 Pi 或 Server 正在运行。
+
+默认数据目录：
+
+```text
+~/.pi/agent/qb-trace/
+├── config.json       # 全局记录开关
+├── traces.sqlite     # 唯一权威 Trace 数据库，schema 1
+└── diagnostics/      # SQLite 不可用时仍可读取的 Runtime 错误/丢失计数
+```
+
+可用 `QB_TRACE_HOME` 覆盖整个目录；`PI_CODING_AGENT_DIR` 控制默认 Pi agent 目录。
+
+## 安全、容量与可观察性边界
+
+QB Trace **不脱敏、不移除认证头、不摘要且不主动截断事件 payload**。数据库可能包含 API 密钥、Authorization header、系统提示词、源码、个人数据、图片、公开 thinking 和完整工具输入输出。请把整个目录视为高敏感数据，未经检查不要共享。
+
+“完整”仅表示 Pi 公共扩展回调实际暴露的内容。Provider 未公开的内部 Chain of Thought、原始 HTTP/SSE response body，以及事件产生前已经隐藏或截断的内容无法恢复。
+
+V1 不自动删除、轮转、压缩或限制已提交数据，数据库会持续增长。SQLite 锁定、磁盘满、损坏和队列饱和均 fail-open：Pi 继续运行；达到有界重试或容量限制后可以丢弃整个事件，但不会截断该事件，`status` 会报告进程可检测到的错误与缺口。正常 off、Session shutdown 和退出会在最多两秒内尝试刷新队列，不阻止 Pi 退出。
+
+## 开发与测试
+
+```sh
+npm install
+npm test
+npm run typecheck
+sh -n bin/qb-trace scripts/install-qb-trace-cli.sh
+```
+
+只加载开发版本：
+
+```sh
+export QB_TRACE_HOME="$(mktemp -d)"
+./bin/qb-trace on
+pi -ne -e .
+./bin/qb-trace status
+```
+
+测试和实现均位于 `src/`。`src/index.ts` 是 Pi 适配入口，`src/cli-entry.ts` 是 CLI 适配入口；配置、事件关联、collector、SQLite store、诊断和只读查询边界各自可独立测试。
+
+## 回滚
+
+1. 关闭 Pi，并执行 `qb-trace off`。
+2. 从 Pi 设置中移除 `pi-trace` package。
+3. 如需恢复旧实现，恢复或重新安装包含 QB Trace 的旧版 `pi-plugins`，再从其目录重新执行 CLI 安装脚本。
+4. 不要删除 `~/.pi/agent/qb-trace/`；schema 1 数据与旧、新实现兼容。
+
+## License
+
+[MIT](LICENSE)
