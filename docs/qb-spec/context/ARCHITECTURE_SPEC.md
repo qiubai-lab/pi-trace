@@ -13,11 +13,13 @@
 - `src/collector.ts` owns bounded batching, retry, fail-open drop accounting and bounded shutdown.
 - `src/store.ts` exclusively owns schema versioning and SQLite writes.
 - `src/diagnostics.ts` owns database-independent error and gap state.
-- `src/query.ts` is the read-only boundary for status and any future Server.
+- `src/query.ts` is the cursor-paginated read-only boundary for status and the local Server; list DTOs exclude full payloads.
+- `src/server.ts` owns loopback HTTP lifecycle, ephemeral authentication, security headers, bounded API routing and SSE cleanup.
+- `src/web.ts` owns dependency-free same-origin UI assets and never receives storage or mutation capabilities.
 - `src/status.ts` owns display-only TUI storage statistics and polling; failures never control or block collection.
 - `src/cli.ts` owns explicit manual prune policy, while `src/store.ts` exclusively owns its SQLite transaction and compaction operations.
 
-Dependencies point from entry adapters toward these capability modules. Modules must not import private files from other Pi packages. A future HTTP/UI Server may depend on the read-only query boundary, but collection, switching and schema ownership must never depend on that Server.
+Dependencies point from entry adapters toward these capability modules. Modules must not import private files from other Pi packages. The HTTP/UI Server is a local personal diagnostic surface: it defaults to loopback-only access and depends only on the read-only query boundary. Collection, switching, pruning and schema ownership must never depend on that Server. Remote/LAN access, multi-user authorization and writable Web operations are outside this boundary unless a later explicit decision replaces it.
 
 ## Stable data contract
 

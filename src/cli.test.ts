@@ -6,6 +6,7 @@ import { runCli } from "./cli.ts";
 import { CorrelationState } from "./events.ts";
 import { RecordingConfigStore } from "./config.ts";
 import { RuntimeDiagnosticsStore } from "./diagnostics.ts";
+import type { RunningTraceServer } from "./server.ts";
 import { TraceStore } from "./store.ts";
 
 const roots: string[] = [];
@@ -176,10 +177,21 @@ describe("qb-trace CLI", () => {
     check.close();
   });
 
-  it("reserves server without pretending it started", async () => {
+  it("starts the local server with validated CLI options and optional browser opening", async () => {
     const fx = await fixture();
-    expect(await runCli(["server"], fx.io, { QB_TRACE_HOME: fx.home })).not.toBe(0);
-    expect(fx.err.join("\n")).toMatch(/not implemented/i);
+    const close = vi.fn(async () => {});
+    const running = { host: "127.0.0.1", port: 8123, token: "secret", url: "http://127.0.0.1:8123/#token=secret", close };
+    const startServer = vi.fn(async () => running);
+    const openUrl = vi.fn();
+    const waitForServerShutdown = vi.fn(async (server: RunningTraceServer) => { await server.close(); });
+    expect(await runCli(
+      ["server", "--port", "8123", "--open"], fx.io, { QB_TRACE_HOME: fx.home },
+      { startServer, openUrl, waitForServerShutdown },
+    )).toBe(0);
+    expect(startServer).toHaveBeenCalledWith(expect.objectContaining({ home: fx.home }), { host: "127.0.0.1", port: 8123 });
+    expect(openUrl).toHaveBeenCalledWith(running.url);
+    expect(close).toHaveBeenCalled();
+    expect(await runCli(["server", "--port", "invalid"], fx.io, { QB_TRACE_HOME: fx.home }, { startServer })).toBe(2);
   });
 
   it("reports diagnostics when the trace database is unavailable", async () => {

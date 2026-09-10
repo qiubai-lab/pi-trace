@@ -38,7 +38,88 @@ export interface TracePruneResult {
   remainingEvents: number;
 }
 
+export interface TraceOverview {
+  eventCount: number;
+  payloadBytes: number;
+  earliestTimestamp?: string;
+  latestTimestamp?: string;
+}
+
+export interface TraceSessionSummary {
+  sessionId: string;
+  sessionFile?: string;
+  cwd?: string;
+  provider?: string;
+  model?: string;
+  eventCount: number;
+  payloadBytes: number;
+  firstTimestamp: string;
+  lastTimestamp: string;
+  lastTimestampMs: number;
+  agentRuns: number;
+  turns: number;
+  toolCalls: number;
+  errors: number;
+}
+
+export interface TraceEventSummary {
+  eventId: string;
+  eventType: string;
+  timestamp: string;
+  timestampMs: number;
+  runtimeId: string;
+  sessionId: string;
+  sequence: number;
+  provider?: string;
+  model?: string;
+  thinkingLevel?: string;
+  agentRunId?: string;
+  turnIndex?: number;
+  messageId?: string;
+  toolCallId?: string;
+  payloadBytes: number;
+  isError: boolean;
+}
+
+export interface TraceEventDetail extends TraceEventSummary {
+  observationStage: string;
+  sessionFile?: string;
+  cwd?: string;
+  monotonicNs: string;
+  payloadJson: string;
+}
+
+export interface TraceEventFilters {
+  sessionId?: string;
+  eventType?: string;
+  runtimeId?: string;
+  agentRunId?: string;
+  turnIndex?: number;
+  toolCallId?: string;
+  provider?: string;
+  model?: string;
+  fromTimestampMs?: number;
+  toTimestampMs?: number;
+  before?: { timestampMs: number; eventId: string };
+  after?: { timestampMs: number; eventId: string };
+}
+
+export interface TraceEventTypeStat { eventType: string; eventCount: number; payloadBytes: number; }
+
 function number(value: unknown): number { return Number(value); }
+function optionalString(value: unknown): string | undefined { return value === null || value === undefined ? undefined : String(value); }
+
+function eventSummary(row: Record<string, unknown>): TraceEventSummary {
+  return {
+    eventId: String(row.event_id), eventType: String(row.event_type), timestamp: String(row.timestamp),
+    timestampMs: number(row.timestamp_ms), runtimeId: String(row.runtime_id), sessionId: String(row.session_id),
+    sequence: number(row.sequence), provider: optionalString(row.provider), model: optionalString(row.model),
+    thinkingLevel: optionalString(row.thinking_level), agentRunId: optionalString(row.agent_run_id),
+    turnIndex: row.turn_index === null || row.turn_index === undefined ? undefined : number(row.turn_index),
+    messageId: optionalString(row.message_id), toolCallId: optionalString(row.tool_call_id),
+    payloadBytes: number(row.payload_bytes), isError: number(row.is_error) === 1,
+  };
+}
 
 export function traceDatabaseSize(path: string): number {
   return [path, `${path}-wal`, `${path}-shm`]
@@ -218,6 +299,80 @@ export class TraceStore implements TraceStoreWriter {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     this.db.exec("VACUUM");
     this.secureFiles();
+  }
+
+  overview(): TraceOverview {
+    const row = this.db.prepare(`SELECT count(*) count, coalesce(sum(payload_bytes), 0) payload_bytes,
+      min(timestamp) earliest, max(timestamp) latest FROM trace_events`).get() as Record<string, unknown>;
+    return {
+      eventCount: number(row.count), payloadBytes: number(row.payload_bytes),
+      earliestTimestamp: optionalString(row.earliest), latestTimestamp: optionalString(row.latest),
+    };
+  }
+
+  eventTypeStats(): TraceEventTypeStat[] {
+    return (this.db.prepare(`SELECT event_type, count(*) event_count, coalesce(sum(payload_bytes), 0) payload_bytes
+      FROM trace_events GROUP BY event_type ORDER BY payload_bytes DESC, event_type`).all() as Array<Record<string, unknown>>)
+      .map(row => ({ eventType: String(row.event_type), eventCount: number(row.event_count), payloadBytes: number(row.payload_bytes) }));
+  }
+
+  listSessionSummaries(limit: number, cursor?: { lastTimestampMs: number; sessionId: string }): TraceSessionSummary[] {
+    const cursorSql = cursor ? "WHERE last_timestamp_ms < ? OR (last_timestamp_ms = ? AND session_id > ?)" : "";
+    const values = cursor ? [cursor.lastTimestampMs, cursor.lastTimestampMs, cursor.sessionId, limit] : [limit];
+    const rows = this.db.prepare(`WITH summaries AS (
+      SELECT session_id, max(session_file) session_file, max(cwd) cwd, max(provider) provider, max(model) model,
+        count(*) event_count, coalesce(sum(payload_bytes), 0) payload_bytes, min(timestamp) first_timestamp,
+        max(timestamp) last_timestamp, max(timestamp_ms) last_timestamp_ms,
+        count(DISTINCT agent_run_id) agent_runs, count(DISTINCT turn_index) turns,
+        count(DISTINCT tool_call_id) tool_calls,
+        sum(CASE WHEN json_extract(payload_json, '$.isError') = 1 THEN 1 ELSE 0 END) errors
+      FROM trace_events GROUP BY session_id
+    ) SELECT * FROM summaries ${cursorSql}
+      ORDER BY last_timestamp_ms DESC, session_id ASC LIMIT ?`).all(...values) as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      sessionId: String(row.session_id), sessionFile: optionalString(row.session_file), cwd: optionalString(row.cwd),
+      provider: optionalString(row.provider), model: optionalString(row.model), eventCount: number(row.event_count),
+      payloadBytes: number(row.payload_bytes), firstTimestamp: String(row.first_timestamp), lastTimestamp: String(row.last_timestamp),
+      lastTimestampMs: number(row.last_timestamp_ms), agentRuns: number(row.agent_runs), turns: number(row.turns),
+      toolCalls: number(row.tool_calls), errors: number(row.errors),
+    }));
+  }
+
+  listEventSummaries(filters: TraceEventFilters, limit: number, ascending = false): TraceEventSummary[] {
+    const clauses: string[] = [];
+    const values: Array<string | number> = [];
+    const add = (sql: string, value: string | number | undefined) => { if (value !== undefined) { clauses.push(sql); values.push(value); } };
+    add("session_id = ?", filters.sessionId); add("event_type = ?", filters.eventType);
+    add("runtime_id = ?", filters.runtimeId); add("agent_run_id = ?", filters.agentRunId);
+    add("turn_index = ?", filters.turnIndex); add("tool_call_id = ?", filters.toolCallId);
+    add("provider = ?", filters.provider); add("model = ?", filters.model);
+    add("timestamp_ms >= ?", filters.fromTimestampMs); add("timestamp_ms <= ?", filters.toTimestampMs);
+    if (filters.before) {
+      clauses.push("(timestamp_ms < ? OR (timestamp_ms = ? AND event_id < ?))");
+      values.push(filters.before.timestampMs, filters.before.timestampMs, filters.before.eventId);
+    }
+    if (filters.after) {
+      clauses.push("(timestamp_ms > ? OR (timestamp_ms = ? AND event_id > ?))");
+      values.push(filters.after.timestampMs, filters.after.timestampMs, filters.after.eventId);
+    }
+    values.push(limit);
+    const order = ascending ? "ASC" : "DESC";
+    const rows = this.db.prepare(`SELECT event_id, event_type, timestamp, timestamp_ms, runtime_id, session_id,
+      sequence, provider, model, thinking_level, agent_run_id, turn_index, message_id, tool_call_id, payload_bytes,
+      CASE WHEN json_extract(payload_json, '$.isError') = 1 THEN 1 ELSE 0 END is_error
+      FROM trace_events ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+      ORDER BY timestamp_ms ${order}, event_id ${order} LIMIT ?`).all(...values) as Array<Record<string, unknown>>;
+    return rows.map(eventSummary);
+  }
+
+  getEventDetail(eventId: string): TraceEventDetail | undefined {
+    const row = this.db.prepare(`SELECT *, CASE WHEN json_extract(payload_json, '$.isError') = 1 THEN 1 ELSE 0 END is_error
+      FROM trace_events WHERE event_id = ?`).get(eventId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      ...eventSummary(row), observationStage: String(row.observation_stage), sessionFile: optionalString(row.session_file),
+      cwd: optionalString(row.cwd), monotonicNs: String(row.monotonic_ns), payloadJson: String(row.payload_json),
+    };
   }
 
   listEvents(sessionId?: string): StoredEvent[] {

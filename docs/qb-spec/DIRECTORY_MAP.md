@@ -14,11 +14,13 @@
 - `src/events.ts`: lossless serialization, event envelopes and correlation.
 - `src/collector.ts`: bounded asynchronous collection and fail-open behavior.
 - `src/store.ts`: versioned global SQLite persistence, transactional manual pruning, compaction and write ownership.
-- `src/query.ts`: read-only query boundary for status and a future Server.
+- `src/query.ts`: cursor-paginated read-only query boundary and Web-safe DTO composition.
+- `src/server.ts`: localhost-only authenticated HTTP API, SSE lifecycle and security boundary.
+- `src/web.ts`: bundled dependency-free local dashboard assets.
 - `src/status.ts`: fail-open TUI recording/count/size status and bounded polling.
 - `src/config.ts`: atomic global recording state and live propagation.
 - `src/diagnostics.ts`: database-independent loss/error state.
-- `src/cli.ts`: standalone on/off/status/prune/reserved-server use cases and prune safety policy.
+- `src/cli.ts`: standalone on/off/status/prune/server use cases, Server option adapter and prune safety policy.
 - `bin/qb-trace`: package-owned executable shim.
 - `scripts/install-qb-trace-cli.sh`: guarded user-level symlink installer and legacy-link migration.
 - `README.md`: installation, migration, operation, security and development guidance.

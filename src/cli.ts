@@ -1,8 +1,10 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { RecordingConfigStore } from "./config.ts";
 import { RuntimeDiagnosticsStore, summarizeDiagnostics } from "./diagnostics.ts";
 import { resolveTracePaths } from "./paths.ts";
 import { TraceQueryService } from "./query.ts";
+import { startTraceServer, type RunningTraceServer } from "./server.ts";
 import { DATABASE_SCHEMA_VERSION, TraceStore, traceDatabaseSize } from "./store.ts";
 
 export interface CliIO { stdout(text: string): void; stderr(text: string): void; }
@@ -12,6 +14,9 @@ export interface CliRuntimeOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   compactDatabase?: (store: TraceStore) => void;
+  startServer?: typeof startTraceServer;
+  waitForServerShutdown?: (server: RunningTraceServer) => Promise<void>;
+  openUrl?: (url: string) => void;
 }
 
 interface PruneArguments {
@@ -220,6 +225,42 @@ async function prune(
   }
 }
 
+function openBrowser(url: string): void {
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.once("error", () => { /* Server remains usable when no desktop opener is installed. */ });
+  child.unref();
+}
+
+async function waitForServerShutdown(server: RunningTraceServer): Promise<void> {
+  await new Promise<void>(resolve => {
+    const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); void server.close().then(resolve); };
+    process.once("SIGINT", stop); process.once("SIGTERM", stop);
+  });
+}
+
+async function serverCommand(args: string[], io: CliIO, env: NodeJS.ProcessEnv, runtime: CliRuntimeOptions): Promise<number> {
+  let host = "127.0.0.1"; let port = 7432; let shouldOpen = false;
+  let hostSeen = false; let portSeen = false;
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (argument === "--host" && !hostSeen) { host = args[++index] ?? ""; hostSeen = true; }
+    else if (argument === "--port" && !portSeen) {
+      const value = args[++index] ?? "";
+      if (!/^\d+$/.test(value)) { io.stderr("server port must be an integer"); return 2; }
+      port = Number(value); portSeen = true;
+    } else if (argument === "--open" && !shouldOpen) shouldOpen = true;
+    else { io.stderr(`invalid server argument: ${argument ?? ""}`); return 2; }
+  }
+  const paths = resolveTracePaths(env);
+  const running = await (runtime.startServer ?? startTraceServer)(paths, { host, port });
+  io.stdout(`server: ${running.url}`);
+  if (shouldOpen) (runtime.openUrl ?? openBrowser)(running.url);
+  await (runtime.waitForServerShutdown ?? waitForServerShutdown)(running);
+  return 0;
+}
+
 async function status(io: CliIO, env: NodeJS.ProcessEnv): Promise<number> {
   const paths = resolveTracePaths(env);
   let enabled: boolean;
@@ -258,7 +299,7 @@ export async function runCli(
       case "off": return await setRecording(false, io, env);
       case "status": return await status(io, env);
       case "prune": return await prune(args.slice(1), io, env, runtime);
-      case "server": io.stderr("qb-trace server is reserved but not implemented in this version"); return 2;
+      case "server": return await serverCommand(args.slice(1), io, env, runtime);
       default:
         io.stderr("usage: qb-trace <on|off|status|prune|server>");
         return 2;

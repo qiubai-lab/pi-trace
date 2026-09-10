@@ -2,7 +2,7 @@
 
 `@qiubai-lab/pi-trace` 是独立的 Pi 本地执行追踪 package。它默认关闭；开启后监听 Pi 公共扩展 API 暴露的 Session、Agent、Turn、Provider、消息、thinking、工具、compaction 和 tree 生命周期，并把完整可观察 payload 追加到一个 SQLite WAL 数据库。
 
-采集不依赖 Web Server，不注册 Pi Slash Command。V1 的 `qb-trace server` 仅保留命令和只读查询边界，尚未实现 HTTP API 或 Web UI。
+采集不依赖 Web Server，不注册 Pi Slash Command。`qb-trace server` 提供可选的本机个人只读 HTTP API、实时事件流和 Web UI；Server 不参与采集或写入。
 
 ## 要求
 
@@ -73,7 +73,8 @@ qb-trace status   # 显示路径、schema、大小、事件数、错误和数据
 qb-trace prune --older-than 30d --dry-run  # 预览删除范围
 qb-trace prune --older-than 30d            # 删除 30 天前的事件
 qb-trace prune --all                       # 删除全部事件并回收磁盘空间
-qb-trace server   # V1 未实现，明确报错并返回非零退出码
+qb-trace server                    # 启动本机只读 Web 服务
+qb-trace server --port 8123 --open # 指定端口并打开浏览器
 ```
 
 运行中的 Pi 实例会在两秒内感知 `on/off`，无需 reload。Pi 的 TUI footer 会以独立状态行显示类似 `● trace on · 3,438 events · 49.5 MB` 的全局事件数量和实际 SQLite 占用；统计最多每五秒刷新，其他运行模式不显示该提示。独立 CLI 不要求 Pi 或 Server 正在运行。
@@ -83,6 +84,16 @@ qb-trace server   # V1 未实现，明确报错并返回非零退出码
 `prune` 必须明确指定 `--older-than <Nh|Nd>` 或 `--all`，二者不能同时使用。`--dry-run` 只报告匹配事件、payload 大小和剩余数量，不改变 recording。实际 prune 如果发现 recording 为开启，会自动暂时关闭，等待运行实例停止接收并刷新队列，删除和压缩完成后再恢复开启；无需手工执行 `qb-trace off/on`。如果等待期间其他进程或用户显式更改了 recording 状态，prune 不会覆盖该决定，并会报告最终保留的状态。
 
 Prune 只删除 `trace_events`，不会删除 `recording_controls`、`config.json` 或 `diagnostics/`。自动暂停和恢复会以 `qb-trace-cli:prune` 来源写入开关审计。删除在一个事务内完成；每次实际 prune 成功后都会默认 checkpoint WAL 并执行 `VACUUM` 以缩小主文件。旧脚本中的 `--vacuum` 仍兼容，但不再是启用压缩的必要条件。`VACUUM` 需要额外临时磁盘和独占访问。如果删除已经提交但压缩失败，命令会明确报告部分成功并返回非零状态，同时仍会尝试恢复原 recording 状态；此时不要在未检查范围的情况下重复执行更宽泛的 prune。
+
+### 本机 Web 服务
+
+```sh
+qb-trace server [--host 127.0.0.1] [--port 7432] [--open]
+```
+
+Server 只允许 `127.0.0.1`、`localhost` 或 `::1`，启动时生成临时 Bearer Token，并打印形如 `http://127.0.0.1:7432/#token=...` 的 URL。Token 位于 URL fragment，不会发送给 HTTP Server；页面将其移入当前标签页的 session storage。关闭 Server 后 Token 失效。
+
+Web UI 提供存储概览、事件类型占用、Session 分页、事件过滤/时间线、按需 payload 详情和实时事件。API 位于 `/api/v1/`，全部要求 Bearer Token；列表默认 50 条、最多 200 条且不包含完整 payload。服务不启用 CORS，不包含第三方资源，也不提供 on/off、prune 或其他写操作。Trace 数据未经脱敏，仍应仅在可信本机浏览器中查看。
 
 默认数据目录：
 
