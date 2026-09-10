@@ -70,10 +70,19 @@ npm run install:cli
 qb-trace on       # 开启所有已加载 pi-trace 的当前及后续 Pi 实例
 qb-trace off      # 停止新增事件，不删除历史数据
 qb-trace status   # 显示路径、schema、大小、事件数、错误和数据缺口
+qb-trace prune --older-than 30d --dry-run  # 预览删除范围
+qb-trace prune --older-than 30d            # 删除 30 天前的事件
+qb-trace prune --all --vacuum              # 删除全部事件并回收磁盘空间
 qb-trace server   # V1 未实现，明确报错并返回非零退出码
 ```
 
-运行中的 Pi 实例会在两秒内感知 `on/off`，无需 reload。独立 CLI 不要求 Pi 或 Server 正在运行。
+运行中的 Pi 实例会在两秒内感知 `on/off`，无需 reload。Pi 的 TUI footer 会以独立状态行显示类似 `● trace on · 3,438 events · 49.5 MB` 的全局事件数量和实际 SQLite 占用；统计最多每五秒刷新，其他运行模式不显示该提示。独立 CLI 不要求 Pi 或 Server 正在运行。
+
+### 手动清理
+
+`prune` 必须明确指定 `--older-than <Nh|Nd>` 或 `--all`，二者不能同时使用。`--dry-run` 只报告匹配事件、payload 大小和剩余数量，在 recording 开启时也可使用。实际删除前必须先运行 `qb-trace off`；命令会等待短暂的传播和队列刷新窗口，并在窗口后再次确认 recording 仍为关闭。
+
+Prune 只删除 `trace_events`，不会删除 `recording_controls`、`config.json` 或 `diagnostics/`。删除在一个事务内完成。普通删除释放的 SQLite 页面可供后续写入复用，但主文件不一定缩小；显式添加 `--vacuum` 才会 checkpoint WAL 并执行 `VACUUM`。`VACUUM` 需要额外临时磁盘和独占访问。如果删除已经提交但压缩失败，命令会明确报告部分成功并返回非零状态；此时不要在未检查范围的情况下重复执行更宽泛的 prune。
 
 默认数据目录：
 

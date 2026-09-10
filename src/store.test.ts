@@ -68,6 +68,34 @@ describe("trace store", () => {
     check.close();
   });
 
+  it("transactionally previews and prunes selected events without changing controls or schema", async () => {
+    const store = new TraceStore(await path());
+    const state = new CorrelationState("prune");
+    const oldEvent = state.envelope("old", { value: "old" }, { sessionId: "s" });
+    const boundaryEvent = state.envelope("boundary", { value: "boundary" }, { sessionId: "s" });
+    const newEvent = state.envelope("new", { value: "new" }, { sessionId: "s" });
+    oldEvent.timestampMs = 99;
+    boundaryEvent.timestampMs = 100;
+    newEvent.timestampMs = 101;
+    store.append([oldEvent, boundaryEvent, newEvent]);
+    store.appendControl(false, "cli");
+
+    expect(store.eventStats(100)).toEqual({ eventCount: 1, payloadBytes: oldEvent.payloadBytes });
+    expect(store.pruneEvents(100)).toEqual({
+      deletedEvents: 1,
+      deletedPayloadBytes: oldEvent.payloadBytes,
+      remainingEvents: 2,
+    });
+    expect(store.listEvents("s").map(event => event.eventType)).toEqual(["boundary", "new"]);
+    expect(store.listControls()).toHaveLength(1);
+    expect(store.schemaVersion()).toBe(1);
+
+    expect(store.pruneEvents()).toMatchObject({ deletedEvents: 2, remainingEvents: 0 });
+    expect(() => store.checkpointAndVacuum()).not.toThrow();
+    expect(store.schemaVersion()).toBe(1);
+    store.close();
+  });
+
   it("writes recording control boundaries independently of a runtime", async () => {
     const store = new TraceStore(await path());
     store.appendControl(true, "cli");

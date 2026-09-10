@@ -5,10 +5,12 @@ import { RuntimeDiagnosticsStore } from "./diagnostics.ts";
 import { CorrelationState, type TraceContextSnapshot } from "./events.ts";
 import { resolveTracePaths } from "./paths.ts";
 import { TraceStore } from "./store.ts";
+import { createTraceStorageStatsReader, TraceStatusController } from "./status.ts";
 
 export interface QbTraceOptions {
   env?: NodeJS.ProcessEnv;
   flushIntervalMs?: number;
+  statusIntervalMs?: number;
   enabledOverride?: boolean;
 }
 
@@ -17,6 +19,7 @@ interface Runtime {
   collector: TraceCollector;
   diagnostics: RuntimeDiagnosticsStore;
   gate?: RecordingGate;
+  status?: TraceStatusController;
 }
 
 const OBSERVED_EVENTS = [
@@ -55,12 +58,20 @@ export function registerQbTrace(pi: ExtensionAPI, options: QbTraceOptions = {}):
       enabled: options.enabledOverride ?? false,
       flushIntervalMs: options.flushIntervalMs,
     });
-    const created: Runtime = { correlation, collector, diagnostics };
+    const status = ctx.mode === "tui"
+      ? new TraceStatusController(ctx, createTraceStorageStatsReader(paths.database), options.statusIntervalMs)
+      : undefined;
+    const created: Runtime = { correlation, collector, diagnostics, status };
     runtime = created;
+    await status?.start(collector.isEnabled());
     if (options.enabledOverride === undefined) {
       const gate = new RecordingGate(
         new RecordingConfigStore(paths.config, true),
-        enabled => collector.setEnabled(enabled),
+        async enabled => {
+          const transition = collector.setEnabled(enabled);
+          status?.setEnabled(enabled);
+          await transition;
+        },
       );
       created.gate = gate;
       await gate.start();
@@ -104,6 +115,7 @@ export function registerQbTrace(pi: ExtensionAPI, options: QbTraceOptions = {}):
     if (!runtime) return;
     await record(event, ctx);
     runtime.gate?.stop();
+    runtime.status?.stop();
     await runtime.collector.stop(1_800);
     runtime = undefined;
   });

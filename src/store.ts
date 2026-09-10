@@ -27,6 +27,17 @@ export interface StoredControl {
   timestamp: string;
 }
 
+export interface TraceEventStats {
+  eventCount: number;
+  payloadBytes: number;
+}
+
+export interface TracePruneResult {
+  deletedEvents: number;
+  deletedPayloadBytes: number;
+  remainingEvents: number;
+}
+
 function number(value: unknown): number { return Number(value); }
 
 export function traceDatabaseSize(path: string): number {
@@ -170,6 +181,43 @@ export class TraceStore implements TraceStoreWriter {
   countEvents(): number {
     const row = this.db.prepare("SELECT count(*) AS count FROM trace_events").get() as { count: number | bigint };
     return number(row.count);
+  }
+
+  eventStats(beforeTimestampMs?: number): TraceEventStats {
+    const sql = beforeTimestampMs === undefined
+      ? "SELECT count(*) AS count, coalesce(sum(payload_bytes), 0) AS payload_bytes FROM trace_events"
+      : "SELECT count(*) AS count, coalesce(sum(payload_bytes), 0) AS payload_bytes FROM trace_events WHERE timestamp_ms < ?";
+    const row = (beforeTimestampMs === undefined
+      ? this.db.prepare(sql).get()
+      : this.db.prepare(sql).get(beforeTimestampMs)) as { count: number | bigint; payload_bytes: number | bigint };
+    return { eventCount: number(row.count), payloadBytes: number(row.payload_bytes) };
+  }
+
+  pruneEvents(beforeTimestampMs?: number): TracePruneResult {
+    const predicate = beforeTimestampMs === undefined ? "" : " WHERE timestamp_ms < ?";
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const selected = this.eventStats(beforeTimestampMs);
+      const statement = this.db.prepare(`DELETE FROM trace_events${predicate}`);
+      const result = beforeTimestampMs === undefined ? statement.run() : statement.run(beforeTimestampMs);
+      const deletedEvents = number(result.changes);
+      if (deletedEvents !== selected.eventCount) {
+        throw new Error(`prune count changed during transaction: selected ${selected.eventCount}, deleted ${deletedEvents}`);
+      }
+      const remainingEvents = this.countEvents();
+      this.db.exec("COMMIT");
+      this.secureFiles();
+      return { deletedEvents, deletedPayloadBytes: selected.payloadBytes, remainingEvents };
+    } catch (error) {
+      try { this.db.exec("ROLLBACK"); } catch { /* original error wins */ }
+      throw error;
+    }
+  }
+
+  checkpointAndVacuum(): void {
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    this.db.exec("VACUUM");
+    this.secureFiles();
   }
 
   listEvents(sessionId?: string): StoredEvent[] {

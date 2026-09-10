@@ -13,11 +13,26 @@ const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))));
 
 describe("Pi trace adapter", () => {
+  it("does not require or render footer status outside TUI mode", async () => {
+    const home = await mkdtemp(join(tmpdir(), "qb-trace-json-")); roots.push(home);
+    const handlers = new Map<string, Handler>();
+    const pi = { on: (name: string, handler: Handler) => { handlers.set(name, handler); } } as unknown as ExtensionAPI;
+    registerQbTrace(pi, { env: { QB_TRACE_HOME: home }, enabledOverride: false });
+    const ctx = {
+      cwd: "/project", mode: "json", thinkingLevel: "off",
+      sessionManager: { getSessionId: () => "json-session", getSessionFile: () => undefined },
+    } as unknown as ExtensionContext;
+
+    await expect(handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx)).resolves.toBeUndefined();
+    await expect(handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, ctx)).resolves.toBeUndefined();
+  });
+
   it("registers no slash command and records callback-visible secrets without mutation", async () => {
     const home = await mkdtemp(join(tmpdir(), "qb-trace-adapter-")); roots.push(home);
     const handlers = new Map<string, Handler>();
     const pi = { on: vi.fn((name: string, handler: Handler) => handlers.set(name, handler)), registerCommand: vi.fn() } as unknown as ExtensionAPI;
     registerQbTrace(pi, { env: { QB_TRACE_HOME: home }, flushIntervalMs: 60_000, enabledOverride: true });
+    const setStatus = vi.fn();
     const ctx = {
       cwd: "/project",
       mode: "tui",
@@ -27,10 +42,15 @@ describe("Pi trace adapter", () => {
         getSessionId: () => "session-1",
         getSessionFile: () => "/session.jsonl",
       },
+      ui: {
+        setStatus,
+        theme: { fg: (_color: string, text: string) => text },
+      },
     } as unknown as ExtensionContext;
 
     await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
     expect(pi.registerCommand).not.toHaveBeenCalled();
+    expect(setStatus).toHaveBeenLastCalledWith("qb-trace", "● trace on · 0 events · 0 B");
     const event = { type: "before_provider_headers", headers: { authorization: "Bearer raw-secret" } };
     await handlers.get("before_provider_headers")?.(event, ctx);
     expect(event.headers.authorization).toBe("Bearer raw-secret");
@@ -67,23 +87,33 @@ describe("Pi trace adapter", () => {
     await new RecordingConfigStore(home).setEnabled(true);
     const createApp = (sessionId: string) => {
       const handlers = new Map<string, Handler>();
+      const setStatus = vi.fn();
       const pi = { on: (name: string, handler: Handler) => { handlers.set(name, handler); } } as unknown as ExtensionAPI;
       registerQbTrace(pi, { env: { QB_TRACE_HOME: home }, flushIntervalMs: 10 });
       const ctx = {
         cwd: "/project", mode: "tui", thinkingLevel: "off",
         sessionManager: { getSessionId: () => sessionId, getSessionFile: () => `/${sessionId}.jsonl` },
+        ui: {
+          setStatus,
+          theme: { fg: (_color: string, text: string) => text },
+        },
       } as unknown as ExtensionContext;
-      return { handlers, ctx };
+      return { handlers, ctx, setStatus };
     };
     const first = createApp("session-a");
     const second = createApp("session-b");
     await first.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, first.ctx);
     await second.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, second.ctx);
+    expect(first.setStatus).toHaveBeenLastCalledWith("qb-trace", expect.stringMatching(/^● trace on · \d+ events · /));
+    expect(second.setStatus).toHaveBeenLastCalledWith("qb-trace", expect.stringMatching(/^● trace on · \d+ events · /));
     await first.handlers.get("agent_start")?.({ type: "agent_start" }, first.ctx);
     await second.handlers.get("agent_start")?.({ type: "agent_start" }, second.ctx);
 
     expect(await runCli(["off"], { stdout() {}, stderr() {} }, { QB_TRACE_HOME: home })).toBe(0);
-    await new Promise(resolve => setTimeout(resolve, 600));
+    await vi.waitFor(() => {
+      expect(first.setStatus).toHaveBeenLastCalledWith("qb-trace", expect.stringMatching(/^○ trace off · \d+ events · /));
+      expect(second.setStatus).toHaveBeenLastCalledWith("qb-trace", expect.stringMatching(/^○ trace off · \d+ events · /));
+    }, { timeout: 1_500 });
     await first.handlers.get("input")?.({ type: "input", text: "must-not-record", source: "interactive" }, first.ctx);
     await first.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, first.ctx);
     await second.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, second.ctx);
