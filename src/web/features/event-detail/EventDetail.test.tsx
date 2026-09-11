@@ -29,8 +29,35 @@ describe("lazy Event detail", () => {
     vi.mocked(traceApi.event).mockResolvedValue(event);
     renderDetail("event-1");
     expect(await screen.findByText("{broken")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "原始内容" }));
+    fireEvent.click(screen.getByRole("tab", { name: "原始 Payload" }));
     expect(screen.getByText("{broken")).toBeInTheDocument();
+  });
+  it("renders semantic message and tool detail views while retaining raw Payload", async () => {
+    vi.mocked(traceApi.event).mockResolvedValue({ ...event, payloadJson: JSON.stringify({ message: { role: "user", content: [{ text: "请读取项目中的 README" }] } }) });
+    renderDetail("event-1");
+    expect((await screen.findAllByText("用户输入")).length).toBeGreaterThan(0);
+    expect(screen.getByText("请读取项目中的 README")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "原始 Payload" }));
+    expect(screen.getByText(/"role":\s*"user"/)).toBeInTheDocument();
+    cleanup();
+
+    vi.mocked(traceApi.event).mockResolvedValue({ ...event, eventType: "tool_result", isError: false, payloadJson: JSON.stringify({ toolName: "read", content: [{ text: "README 内容" }] }) });
+    renderDetail("event-1");
+    expect(await screen.findByRole("group", { name: "调用结果显示方式" })).toBeInTheDocument();
+    expect(screen.getByText("read")).toBeInTheDocument();
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.getByText("README 内容")).toBeInTheDocument();
+  });
+  it("switches between top-level tabs and readable-content modes", async () => {
+    vi.mocked(traceApi.event).mockResolvedValue({ ...event, payloadJson: JSON.stringify({ message: { role: "user", content: [{ text: "# 标题\n\n- 项目" }] } }) });
+    renderDetail("event-1");
+    expect(await screen.findByRole("heading", { name: "标题" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "文本原文" }));
+    expect(screen.getByRole("button", { name: "Markdown 渲染" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("tab", { name: "事件信息" }));
+    expect(screen.getByRole("heading", { name: "事件信息" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "原始 Payload" }));
+    expect(screen.getByText((_, element) => Boolean(element?.classList.contains("raw-payload") && element.textContent?.includes("\n  \"message\":")))).toBeInTheDocument();
   });
   it("renders loading state and close control inside the popover surface", async () => {
     vi.mocked(traceApi.event).mockResolvedValue(event);
@@ -46,7 +73,7 @@ describe("lazy Event detail", () => {
     const payloadJson = JSON.stringify({ text: "x".repeat(100_000) });
     vi.mocked(traceApi.event).mockResolvedValue({ ...event, payloadBytes: payloadJson.length, payloadJson });
     const rendered = renderDetail("event-1");
-    fireEvent.click(await screen.findByRole("button", { name: "原始内容" }));
-    expect(rendered.container.querySelector(".payload")?.textContent).toBe(payloadJson);
+    fireEvent.click(await screen.findByRole("tab", { name: "原始 Payload" }));
+    expect(rendered.container.querySelector(".raw-payload")?.textContent).toBe(JSON.stringify(JSON.parse(payloadJson), null, 2));
   });
 });

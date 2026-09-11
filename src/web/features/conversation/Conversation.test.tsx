@@ -68,7 +68,7 @@ describe("Conversation", () => {
     await waitFor(() => expect(source).toHaveFocus());
     fireEvent.click(source);
     expect(await screen.findByRole("dialog", { name: "事件详情" })).toBeInTheDocument();
-    fireEvent.pointerDown(document.body);
+    fireEvent.pointerDown(document.querySelector(".event-modal-backdrop")!);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "事件详情" })).not.toBeInTheDocument());
   });
 });
