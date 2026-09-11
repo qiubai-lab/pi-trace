@@ -21,6 +21,10 @@ export function Conversation({ sessionId, selected, onSelect }: { sessionId: str
   const [dragging, setDragging] = useState(false);
   const drag = useRef<{ pointerId: number; startY: number; scrollTop: number; moved: boolean } | null>(null);
   const virtualizer = useVirtualizer({ count: items.length, getScrollElement: () => viewport.current, estimateSize: index => Math.min(220, 82 + (items[index]?.preview.length ?? 0) / 7), overscan: 6 });
+  const loadMoreWhenNearEnd = useCallback((element: HTMLDivElement) => {
+    const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+    if (query.hasNextPage && !query.isFetchingNextPage && remaining < 480) void query.fetchNextPage();
+  }, [query]);
 
   const closeDetail = useCallback(() => {
     const source = anchor;
@@ -48,6 +52,7 @@ export function Conversation({ sessionId, selected, onSelect }: { sessionId: str
     active.moved = true;
     setDragging(true);
     event.currentTarget.scrollTop = active.scrollTop - delta;
+    loadMoreWhenNearEnd(event.currentTarget);
     event.preventDefault();
   };
   const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -57,13 +62,13 @@ export function Conversation({ sessionId, selected, onSelect }: { sessionId: str
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
-  if (query.isPending) return <ConversationState title="Building conversation…" />;
-  if (query.isError) return <ConversationState title="Conversation unavailable" detail={query.error.message} retry={() => query.refetch()} />;
-  if (!items.length) return <ConversationState title="No conversation context found" detail="This Session has no recorded prompts, messages, thinking, or tool activity." />;
+  if (query.isPending) return <ConversationState title="正在整理对话记录…" />;
+  if (query.isError) return <ConversationState title="暂时无法读取对话记录" detail={query.error.message} retry={() => query.refetch()} />;
+  if (!items.length) return <ConversationState title="没有可用的对话上下文" detail="此 Session 尚未记录 prompt、消息、thinking 或工具活动。" />;
   return <div className="virtual-region conversation-canvas">
-    <div className="canvas-hint" aria-hidden="true">Drag canvas or scroll to explore</div>
-    <div className={`virtual-scroll conversation-scroll ${dragging ? "is-dragging" : ""}`} ref={viewport} tabIndex={0} aria-label="Conversation canvas"
-      onPointerDown={beginPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
+    <div className="canvas-hint" aria-hidden="true">拖动画布或滚动探索</div>
+    <div className={`virtual-scroll conversation-scroll ${dragging ? "is-dragging" : ""}`} ref={viewport} tabIndex={0} aria-label="对话画布"
+      onScroll={event => loadMoreWhenNearEnd(event.currentTarget)} onPointerDown={beginPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map(row => {
           const item = items[row.index]!;
@@ -75,13 +80,12 @@ export function Conversation({ sessionId, selected, onSelect }: { sessionId: str
               {item.role === "tool" && item.toolStatus && <span className={`tool-status ${item.toolStatus}`}>{statusLabel(item.toolStatus)}</span>}
               <time>{new Date(item.timestamp).toLocaleTimeString()}</time>
               {item.role === "tool" ? <ToolBody item={item} /> : <pre>{item.preview}</pre>}
-              {item.truncated && <span className="truncated-note">Preview truncated · Open Event detail for the complete payload</span>}
+              {item.truncated && <span className="truncated-note">预览已截断 · 打开事件详情查看完整 Payload</span>}
             </button>
           </div>;
         })}
       </div>
     </div>
-    {query.hasNextPage && <button className="quiet-button load-more" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "Continue to later context"}</button>}
     {selected && anchor && <AnchoredEventPopover anchor={anchor} eventId={selected} onClose={closeDetail} />}
   </div>;
 }
@@ -131,17 +135,17 @@ function AnchoredEventPopover({ anchor, eventId, onClose }: { anchor: HTMLElemen
 }
 
 function statusLabel(status: NonNullable<ConversationItem["toolStatus"]>): string {
-  return status === "pending" ? "Pending" : status === "error" ? "Error" : "Completed";
+  return status === "pending" ? "等待中" : status === "error" ? "错误" : "已完成";
 }
 
 function ToolBody({ item }: { item: ConversationItem }) {
   return <div className="tool-body">
-    {item.toolInputPreview !== undefined && <section><span>Input</span><pre>{item.toolInputPreview}</pre></section>}
-    {item.toolResultPreview !== undefined && <section><span>Result</span><pre>{item.toolResultPreview}</pre></section>}
+    {item.toolInputPreview !== undefined && <section><span>输入</span><pre>{item.toolInputPreview}</pre></section>}
+    {item.toolResultPreview !== undefined && <section><span>结果</span><pre>{item.toolResultPreview}</pre></section>}
     {item.toolInputPreview === undefined && item.toolResultPreview === undefined && <section><pre>{item.preview}</pre></section>}
   </div>;
 }
 
 function ConversationState({ title, detail, retry }: { title: string; detail?: string; retry?: () => void }) {
-  return <div className="center-state"><div className="state-orb"/><strong>{title}</strong>{detail && <span>{detail}</span>}{retry && <button className="quiet-button" onClick={retry}>Try again</button>}</div>;
+  return <div className="center-state"><div className="state-orb"/><strong>{title}</strong>{detail && <span>{detail}</span>}{retry && <button className="quiet-button" onClick={retry}>重试</button>}</div>;
 }

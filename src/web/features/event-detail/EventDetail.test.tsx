@@ -23,30 +23,30 @@ describe("lazy Event detail", () => {
   it("does not request a payload until an Event is selected", () => {
     renderDetail();
     expect(traceApi.event).not.toHaveBeenCalled();
-    expect(screen.getByText("Select an Event")).toBeInTheDocument();
+    expect(screen.getByText("选择一个事件")).toBeInTheDocument();
   });
   it("keeps malformed stored text available in structured and raw modes", async () => {
     vi.mocked(traceApi.event).mockResolvedValue(event);
     renderDetail("event-1");
     expect(await screen.findByText("{broken")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "原始内容" }));
     expect(screen.getByText("{broken")).toBeInTheDocument();
   });
   it("renders loading state and close control inside the popover surface", async () => {
     vi.mocked(traceApi.event).mockResolvedValue(event);
     const onClose = vi.fn();
     renderDetail("event-1", "popover", onClose);
-    expect(screen.getByRole("dialog", { name: "Event detail" })).toBeInTheDocument();
-    expect(screen.getByText("Loading payload…")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "事件详情" })).toBeInTheDocument();
+    expect(screen.getByText("正在载入 Payload…")).toBeInTheDocument();
     expect(await screen.findByText("{broken")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Close Event detail" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭事件详情" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
   it("retains access to a large stored payload", async () => {
     const payloadJson = JSON.stringify({ text: "x".repeat(100_000) });
     vi.mocked(traceApi.event).mockResolvedValue({ ...event, payloadBytes: payloadJson.length, payloadJson });
     const rendered = renderDetail("event-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+    fireEvent.click(await screen.findByRole("button", { name: "原始内容" }));
     expect(rendered.container.querySelector(".payload")?.textContent).toBe(payloadJson);
   });
 });

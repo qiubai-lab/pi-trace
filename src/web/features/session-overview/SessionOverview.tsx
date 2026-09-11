@@ -9,18 +9,17 @@ const formatBytes = (bytes: number) => {
   return `${index ? value.toFixed(1) : value} ${units[index]}`;
 };
 
-export function SessionOverview({ sessionId }: { sessionId: string }) {
+export function SessionContextBar({ sessionId, live, liveState, onToggleLive }: { sessionId: string; live: boolean; liveState: "off" | "connecting" | "live" | "error"; onToggleLive(): void }) {
   const query = useQuery({ queryKey: ["session-summary", sessionId], queryFn: ({ signal }) => traceApi.sessionSummary(sessionId, signal) });
-  if (query.isPending) return <div className="summary-strip skeleton" aria-label="Loading Session summary" />;
-  if (query.isError) return <div className="summary-error" role="alert">Summary unavailable · <button onClick={() => query.refetch()}>Retry</button></div>;
+  if (query.isPending) return <div className="session-context-bar skeleton" aria-label="正在载入 Session 上下文" />;
+  if (query.isError) return <div className="summary-error" role="alert">无法载入 Session 信息 · <button onClick={() => query.refetch()}>重试</button></div>;
   const item = query.data;
-  const stats = [
-    ["Events", item.eventCount.toLocaleString()], ["Payload", formatBytes(item.payloadBytes)], ["Agent runs", item.agentRuns],
-    ["Turns", item.turns], ["Tools", item.toolCalls], ["Errors", item.errors],
-  ];
-  return <section className="summary-strip" aria-label="Session summary">
-    <div className="session-identity"><span className="eyebrow">Current Session</span><strong>{item.cwd ?? item.sessionId}</strong><span>{[item.provider, item.model].filter(Boolean).join(" · ") || "Provider context unavailable"}</span></div>
-    {stats.map(([label, value]) => <div className={`summary-stat ${label === "Errors" && Number(value) > 0 ? "has-error" : ""}`} key={label}><span>{label}</span><strong>{value}</strong></div>)}
+  const stats = [["事件", item.eventCount.toLocaleString()], ["工具", item.toolCalls], ["错误", item.errors]];
+  const liveLabel = liveState === "error" ? "重新连接" : liveState === "connecting" ? "正在连接" : live ? "实时更新" : "开启实时";
+  return <section className="session-context-bar" aria-label="Session 上下文">
+    <div className="compact-session-identity"><strong title={item.cwd ?? item.sessionId}>{item.cwd ?? item.sessionId}</strong><span>{[item.provider, item.model].filter(Boolean).join(" · ") || "provider 信息不可用"}</span></div>
+    <div className="compact-stats">{stats.map(([label, value]) => <span className={`compact-stat ${label === "错误" && Number(value) > 0 ? "has-error" : ""}`} key={label}><b>{value}</b><small>{label}</small></span>)}</div>
+    <button className={`live-button ${live ? "is-active" : ""}`} onClick={onToggleLive}><span className="status-dot" />{liveLabel}</button>
   </section>;
 }
 
