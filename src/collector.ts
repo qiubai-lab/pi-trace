@@ -25,6 +25,9 @@ export class TraceCollector {
   private readonly maxQueueBytes: number;
   private readonly batchSize: number;
   private readonly maxAttempts: number;
+  private writeBatches = 0;
+  private writeMs = 0;
+  private maxWriteMs = 0;
 
   constructor(private readonly options: TraceCollectorOptions) {
     this.enabled = options.enabled ?? true;
@@ -38,6 +41,7 @@ export class TraceCollector {
 
   isEnabled(): boolean { return this.enabled; }
   pendingEvents(): number { return this.queue.length; }
+  metrics() { return { pendingEvents: this.queue.length, pendingBytes: this.queueBytes, writeBatches: this.writeBatches, writeMs: this.writeMs, maxWriteMs: this.maxWriteMs }; }
 
   enqueue(event: TraceEnvelope): boolean {
     if (!this.enabled) return false;
@@ -63,7 +67,10 @@ export class TraceCollector {
     const batch = this.queue.slice(0, this.batchSize);
     try {
       this.writer ??= this.options.writer();
-      this.writer.append(batch);
+      const started = performance.now();
+      await this.writer.append(batch);
+      const elapsed = performance.now() - started;
+      this.writeBatches++; this.writeMs += elapsed; this.maxWriteMs = Math.max(this.maxWriteMs, elapsed);
       this.remove(batch.length);
       this.consecutiveFailures = 0;
     } catch (error) {
@@ -74,7 +81,7 @@ export class TraceCollector {
         this.options.diagnostics.recordDrop(batch.length, error);
         this.consecutiveFailures = 0;
       }
-      try { this.writer?.close(); } catch { /* fail open */ }
+      try { await this.writer?.close(); } catch { /* fail open */ }
       this.writer = undefined;
     } finally {
       this.flushing = false;
@@ -91,7 +98,7 @@ export class TraceCollector {
       this.remove(remaining);
       this.options.diagnostics.recordDrop(remaining, new Error("trace shutdown flush deadline exceeded"));
     }
-    try { this.writer?.close(); } catch (error) { this.options.diagnostics.recordError(error); }
+    try { await this.writer?.close(); } catch (error) { this.options.diagnostics.recordError(error); }
     this.writer = undefined;
   }
 

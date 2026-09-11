@@ -17,7 +17,12 @@
   "files": [
     "bin/",
     "dist/web/",
+    "dist/workers/",
     "src/",
+    "examples/",
+    "docs/instrumentation.md",
+    "docs/verification-execution-workbench.md",
+    "docs/evidence/execution-workbench/",
     "scripts/install-qb-trace-cli.sh",
     "README.md",
     "LICENSE"
@@ -32,9 +37,13 @@
     "install:cli": "./scripts/install-qb-trace-cli.sh",
     "dev:web": "vite --config vite.config.ts",
     "build:web": "vite build --config vite.config.ts",
+    "build:workers": "vite build --config vite.workers.config.ts",
+    "build": "npm run build:web && npm run build:workers",
+    "preview:execution": "npm run build && node --experimental-transform-types --no-warnings scripts/preview-execution.ts",
+    "benchmark:execution": "node --experimental-transform-types --no-warnings scripts/benchmark-execution.ts",
     "benchmark:web": "node --no-warnings=ExperimentalWarning scripts/benchmark-web.ts",
-    "prepare": "npm run build:web",
-    "test": "npm run build:web && vitest run --config vitest.config.ts",
+    "prepare": "npm run build",
+    "test": "npm run build && vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit"
   },
   "pi": {

@@ -1,61 +1,217 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-
+import type { Operation } from "../../analysis/execution-contracts";
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 64,
+    getVirtualItems: () =>
+      Array.from({ length: Math.min(12, count) }, (_, index) => ({
+        index,
+        start: index * 64,
+      })),
+    measureElement() {},
+    scrollToIndex() {},
+  }),
+}));
 const session = {
-  sessionId: "session-1", cwd: "/work/project", provider: "openai", model: "model",
-  eventCount: 42, payloadBytes: 2048, firstTimestamp: "2026-09-10T00:00:00.000Z",
-  lastTimestamp: "2026-09-10T00:01:00.000Z", lastTimestampMs: 60_000,
-  agentRuns: 1, turns: 2, toolCalls: 3, errors: 0,
+  sessionId: "session-1",
+  cwd: "/work/project",
+  provider: "openai",
+  model: "model",
+  eventCount: 42,
+  payloadBytes: 2048,
+  firstTimestamp: "2026-09-10T00:00:00.000Z",
+  lastTimestamp: "2026-09-10T00:01:00.000Z",
+  lastTimestampMs: 60000,
+  agentRuns: 1,
+  turns: 2,
+  toolCalls: 3,
+  errors: 0,
 };
-
-function json(body: unknown): Response { return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }); }
-
-describe("Session workbench", () => {
+const operation: Operation = {
+  id: "op-read",
+  sessionId: "session-1",
+  runtimeId: "r",
+  kind: "tool",
+  name: "read",
+  summary: "file.ts",
+  status: "completed",
+  start: 100,
+  end: 300,
+  startSequence: 1,
+  revision: 4,
+  eventCount: 2,
+  source: "fixture",
+  inputEventId: "e1",
+  resultEventId: "e2",
+  lastEventId: "e2",
+  lastEventType: "tool_execution_end",
+  incompleteStart: false,
+  durationLabel: "观察区间",
+};
+const page = {
+  items: [operation],
+  total: 220,
+  offset: 0,
+  limit: 100,
+  revision: 4,
+  indexing: false,
+  groups: [],
+  overview: {
+    start: 100,
+    end: 60000,
+    events: 42,
+    operations: 220,
+    errors: 0,
+    gaps: 0,
+    bins: Array(64).fill(1),
+  },
+};
+function json(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+function mount() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
+describe("execution workbench AC-002/003/007", () => {
+  afterEach(() => cleanup());
   beforeEach(() => {
     history.replaceState(null, "", "/");
-    class ResizeObserver { observe() {} unobserve() {} disconnect() {} }
-    vi.stubGlobal("ResizeObserver", ResizeObserver);
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path.includes("/api/v1/status")) return json({ recording: true, schemaVersion: 1, databaseSizeBytes: 1, overview: { eventCount: 42, payloadBytes: 2048 }, diagnostics: { droppedEvents: 0, storageErrors: 0 } });
-      if (path.includes("/api/v1/sessions/session-1/summary")) return json(session);
-      if (path.includes("/api/v1/sessions/session-1/timeline")) return json({ items: [], nextCursor: undefined });
-      if (path.includes("/api/v1/sessions/session-1/conversation")) return json({ items: [], nextCursor: undefined });
-      if (path.includes("/api/v1/sessions")) return json({ items: [session], nextCursor: undefined });
-      throw new Error(`Unexpected request: ${path}`);
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://localhost");
+        const p = url.searchParams;
+        if (url.pathname.endsWith("/status"))
+          return json({
+            recording: true,
+            diagnostics: { droppedEvents: 0, storageErrors: 0 },
+          });
+        if (url.pathname.endsWith("/summary")) return json(session);
+        if (url.pathname.endsWith("/sessions"))
+          return json({ items: [session] });
+        if (url.pathname.endsWith("/execution/page"))
+          return json({
+            ...page,
+            offset: Number(p.get("offset") ?? 0),
+            items:
+              p.get("view") === "events" || Number(p.get("offset")) > 0
+                ? []
+                : [operation],
+            ...(p.get("view") === "events"
+              ? {
+                  events: [
+                    {
+                      id: "e2",
+                      type: "tool_execution_end",
+                      sequence: 2,
+                      timestamp: 300,
+                      runtimeId: "r",
+                    },
+                  ],
+                }
+              : {}),
+          });
+        if (url.pathname.endsWith("/execution/inspect"))
+          return json({
+            operation,
+            sections: [
+              {
+                id: "input",
+                label: "输入参数",
+                format: "json",
+                text: '{"path":"file.ts"}',
+                eventId: "e1",
+              },
+              {
+                id: "output",
+                label: "工具输出",
+                format: "text",
+                text: "recorded file content",
+                eventId: "e2",
+              },
+            ],
+            events: [],
+            totalEvents: 2,
+            relations: [],
+            warnings: [],
+          });
+        if (url.pathname.endsWith("/execution/raw"))
+          return json({
+            eventId: "e2",
+            eventType: "tool_execution_end",
+            observationStage: "tool_execution_end",
+            text: '{"raw":true}',
+            offset: 0,
+            totalChars: 12,
+            masked: true,
+          });
+        if (url.pathname.endsWith("/execution/step")) return json({ at: 100 });
+        throw new Error(`Unexpected request ${url.pathname}`);
+      }),
+    );
   });
-
-  it("starts with an informative Session list, enters its canvas, and returns", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
-    expect(screen.getByRole("heading", { name: "Session" })).toBeInTheDocument();
-    expect(await screen.findByText("#session-1")).toBeInTheDocument();
-    expect(screen.getByText("1 次运行 · 2 轮 · 3 个工具")).toBeInTheDocument();
-    expect(screen.getByText("42")).toBeInTheDocument();
-    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /project.*session-1/i }));
-    expect(await screen.findByRole("button", { name: "返回 Session" })).toBeInTheDocument();
-    expect(await screen.findByLabelText("Session 上下文")).toHaveTextContent("/work/project");
-    expect(screen.getByLabelText("Session 上下文")).toHaveTextContent("42");
-    expect(screen.getByRole("button", { name: "开启实时" })).toBeInTheDocument();
-    expect(screen.queryByText("按时间顺序查看 Session")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Session" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Timeline" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "原始内容" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Filter by event type")).not.toBeInTheDocument();
-    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("事件详情")).not.toBeInTheDocument();
-    expect(location.search).toBe("?session=session-1");
-    expect(await screen.findByText("没有可用的对话上下文")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "返回 Session" }));
-    await waitFor(() => expect(location.search).not.toContain("session="));
-    expect(screen.getByRole("heading", { name: "Session" })).toBeInTheDocument();
-    expect(screen.getByText("Payload 未经脱敏")).toBeInTheDocument();
+  it("enters three linked views, reads tool evidence, preserves inspector across windows, and resizes by keyboard", async () => {
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /project.*session-1/i }),
+    );
+    expect(
+      await screen.findByRole("region", { name: "执行时间线" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /read.*file.ts/ }));
+    expect(
+      await screen.findByText("recorded file content"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "下一窗口 →" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /read.*file.ts/ }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("recorded file content")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("separator"), { key: "ArrowLeft" });
+    expect(screen.getByRole("separator")).toHaveAttribute(
+      "aria-valuenow",
+      "420",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /对话/ }));
+    await waitFor(() => expect(location.search).toContain("view=conversation"));
+    expect(screen.getByText("recorded file content")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^⌁/ }));
+    expect(
+      await screen.findByRole("region", { name: "原始事件列表" }),
+    ).toBeInTheDocument();
+    expect(location.search).not.toContain("token");
+  });
+  it("opens a deep-linked inspector independently of the first rendered window", async () => {
+    history.replaceState(null, "", "/?session=session-1&event=op-read");
+    mount();
+    expect(
+      await screen.findByText("recorded file content"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+    expect(await screen.findByText('{"raw":true}')).toBeInTheDocument();
   });
 });

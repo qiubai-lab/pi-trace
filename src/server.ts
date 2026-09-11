@@ -5,6 +5,8 @@ import type { TracePaths } from "./paths.ts";
 import { hostAllowed, isLoopback, secureEqual, securityHeaders, send } from "./server/http.ts";
 import { handleApiRoute, type ActiveStream } from "./server/routes.ts";
 import { loadWebAsset, webAssetsReady } from "./web-assets.ts";
+import { ExecutionService } from "./execution-service.ts";
+import { handleExecutionRoute } from "./server/execution-routes.ts";
 
 export interface TraceServerOptions { host?: string; port?: number; token?: string; streamIntervalMs?: number; }
 export interface RunningTraceServer { host: string; port: number; token: string; url: string; close(): Promise<void>; }
@@ -19,6 +21,7 @@ export async function startTraceServer(paths: TracePaths, options: TraceServerOp
   const token = options.token ?? randomBytes(24).toString("base64url");
   const streams = new Set<ActiveStream>();
   let boundPort = requestedPort;
+  let execution: ExecutionService | undefined;
 
   const server = createServer(async (req, res) => {
     try {
@@ -36,7 +39,10 @@ export async function startTraceServer(paths: TracePaths, options: TraceServerOp
       }
       if (!url.pathname.startsWith(API_PREFIX)) { send(res, 404, { error: "not found" }); return; }
       if (!secureEqual(req.headers.authorization ?? "", `Bearer ${token}`)) { send(res, 401, { error: "unauthorized" }); return; }
-      await handleApiRoute(req, res, url, { paths, streams, streamIntervalMs: options.streamIntervalMs ?? 1_000 });
+      if (url.pathname.startsWith("/api/v1/execution/")) {
+        execution ??= new ExecutionService(paths.database);
+        await handleExecutionRoute(req, res, url, execution, streams);
+      } else await handleApiRoute(req, res, url, { paths, streams, streamIntervalMs: options.streamIntervalMs ?? 1_000 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const status = /invalid cursor|must be|limit/.test(message) ? 400 : /busy|locked/i.test(message) ? 503 : 500;
@@ -55,6 +61,7 @@ export async function startTraceServer(paths: TracePaths, options: TraceServerOp
     close: async () => {
       for (const stream of streams) { clearInterval(stream.timer); stream.response.end(); }
       streams.clear();
+      await execution?.close();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     },
   };

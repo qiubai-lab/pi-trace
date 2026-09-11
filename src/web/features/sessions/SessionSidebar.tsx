@@ -42,7 +42,7 @@ export function SessionSidebar({ onSelect }: { onSelect(id: string): void }) {
       {visible.map(session => <button key={session.sessionId} className="session-card" onClick={() => onSelect(session.sessionId)}>
         <span className="session-card-main"><span className="session-title">{sessionTitle(session)}</span><span className="session-id">#{shortId(session.sessionId)}</span><span className="session-path">{session.cwd ?? "工作目录不可用"}</span></span>
         <span className="session-context"><strong>{[session.provider, session.model].filter(Boolean).join(" · ") || "provider 信息不可用"}</strong><span>{session.agentRuns.toLocaleString()} 次运行 · {session.turns.toLocaleString()} 轮 · {session.toolCalls.toLocaleString()} 个工具</span></span>
-        <span className="session-volume"><strong>{session.eventCount.toLocaleString()}</strong><span>个事件</span>{session.errors > 0 && <span className="error-text">{session.errors} 个错误</span>}</span>
+        <span className="session-volume"><strong>{session.eventCount.toLocaleString()}</strong><span>个事件</span>{session.errors > 0 && <span className="error-text">{session.errors} 个错误事件</span>}</span>
         <span className="session-time"><span>最近活动</span><time>{new Date(session.lastTimestamp).toLocaleString()}</time></span>
         <span className="session-open" aria-hidden="true">→</span>
       </button>)}

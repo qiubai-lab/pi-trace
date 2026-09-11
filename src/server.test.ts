@@ -37,8 +37,8 @@ describe("local Trace Web server", () => {
       expect(stylePath).toMatch(/^\/assets\//);
       const app = await (await fetch(`http://127.0.0.1:${server.port}${scriptPath}`)).text();
       expect(app).toContain("qb-trace-token");
-      expect(app).toContain("/api/v1/events/stream");
-      expect(app).toContain("Payload 未经脱敏");
+      expect(app).toContain("/api/v1/execution/");
+      expect(app).toContain("原始 Payload 未脱敏");
       expect(html).not.toMatch(/(?:src|href)="https?:\/\//);
 
       expect((await fetch(`http://127.0.0.1:${server.port}/api/v1/status`)).status).toBe(401);

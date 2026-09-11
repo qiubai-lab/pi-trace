@@ -9,12 +9,11 @@ describe("safe workspace URL state", () => {
     sessionStorage.clear();
   });
 
-  it("restores only Session and Event state and drops obsolete display modes", () => {
+  it("restores linked analysis views and drops obsolete type filters", () => {
     const { result } = renderHook(() => useWorkspaceState());
-    expect(result.current[0]).toEqual({ sessionId: "s1", eventId: "e1" });
+    expect(result.current[0]).toEqual({ sessionId: "s1", eventId: "e1", view: "conversation" });
     act(() => result.current[1]({ eventId: undefined }));
-    expect(location.search).toBe("?session=s1");
-    expect(location.search).not.toContain("view=");
+    expect(location.search).toBe("?session=s1&view=conversation");
     expect(location.search).not.toContain("type=");
   });
 

@@ -24,8 +24,8 @@ export type {
 export const DATABASE_SCHEMA_VERSION = 1;
 
 export interface TraceStoreWriter {
-  append(events: readonly TraceEnvelope[]): void;
-  close(): void;
+  append(events: readonly TraceEnvelope[]): void | Promise<void>;
+  close(): void | Promise<void>;
 }
 
 export interface StoredEvent {
@@ -279,7 +279,9 @@ export class TraceStore implements TraceStoreWriter {
     const cursorSql = cursor ? "WHERE last_timestamp_ms < ? OR (last_timestamp_ms = ? AND session_id > ?)" : "";
     const values = cursor ? [cursor.lastTimestampMs, cursor.lastTimestampMs, cursor.sessionId, limit] : [limit];
     const rows = this.db.prepare(`WITH summaries AS (
-      SELECT session_id, max(session_file) session_file, max(cwd) cwd, max(provider) provider, max(model) model,
+      SELECT session_id, max(session_file) session_file, max(cwd) cwd,
+        (SELECT provider FROM trace_events latest WHERE latest.session_id=trace_events.session_id ORDER BY latest.timestamp_ms DESC,latest.sequence DESC LIMIT 1) provider,
+        (SELECT model FROM trace_events latest WHERE latest.session_id=trace_events.session_id ORDER BY latest.timestamp_ms DESC,latest.sequence DESC LIMIT 1) model,
         count(*) event_count, coalesce(sum(payload_bytes), 0) payload_bytes, min(timestamp) first_timestamp,
         max(timestamp) last_timestamp, max(timestamp_ms) last_timestamp_ms,
         count(DISTINCT agent_run_id) agent_runs,
@@ -294,7 +296,8 @@ export class TraceStore implements TraceStoreWriter {
 
   getSessionSummary(sessionId: string): TraceSessionSummary | undefined {
     const row = this.db.prepare(`SELECT session_id, max(session_file) session_file, max(cwd) cwd,
-      max(provider) provider, max(model) model, count(*) event_count,
+      (SELECT provider FROM trace_events latest WHERE latest.session_id=trace_events.session_id ORDER BY latest.timestamp_ms DESC,latest.sequence DESC LIMIT 1) provider,
+      (SELECT model FROM trace_events latest WHERE latest.session_id=trace_events.session_id ORDER BY latest.timestamp_ms DESC,latest.sequence DESC LIMIT 1) model, count(*) event_count,
       coalesce(sum(payload_bytes), 0) payload_bytes, min(timestamp) first_timestamp,
       max(timestamp) last_timestamp, max(timestamp_ms) last_timestamp_ms,
       count(DISTINCT agent_run_id) agent_runs,
