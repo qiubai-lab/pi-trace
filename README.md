@@ -93,7 +93,9 @@ qb-trace server [--host 127.0.0.1] [--port 7432] [--open]
 
 Server 只允许 `127.0.0.1`、`localhost` 或 `::1`，启动时生成临时 Bearer Token，并打印形如 `http://127.0.0.1:7432/#token=...` 的 URL。Token 位于 URL fragment，不会发送给 HTTP Server；页面将其移入当前标签页的 session storage。关闭 Server 后 Token 失效。
 
-Web UI 提供存储概览、事件类型占用、Session 分页、事件过滤/时间线、按需 payload 详情和实时事件。API 位于 `/api/v1/`，全部要求 Bearer Token；列表默认 50 条、最多 200 条且不包含完整 payload。服务不启用 CORS，不包含第三方资源，也不提供 on/off、prune 或其他写操作。Trace 数据未经脱敏，仍应仅在可信本机浏览器中查看。
+Web UI 是一个采用白色主题、面向 Windows 桌面浏览器的 React Session 工作台。入口页先显示包含短 ID、标题、路径、模型、事件量及运行摘要的 Session 列表；进入 Session 后，独立画布只维护从早到晚的 Conversation，不再提供 Timeline、Raw 视图或事件类型筛选。Conversation 画布支持滚轮、键盘、滚动条以及从非交互留白处直接拖拽进行垂直浏览。它保留已记录的 System Prompt、User Prompt、Thinking、Assistant Response 和 Shell Input，并按 `toolCallId` 将同一次 Tool Call/Start/Result 合并成一个带 Pending/Completed/Error 状态、Input 与 Result/Error 的工具区块，同时过滤逐 token 的流式更新噪声；每个语义块仍可回到源 Event，完整工具区块优先链接 Result Event。选择会话区块后，完整 payload 以锚定在对应区块旁的轻量弹窗按需加载，不再占用常驻右侧 Inspector；弹窗支持 Structured/Raw、Escape、外部点击和关闭后焦点返回。Session 和当前 Event 保存在不含 Token 的 URL 中，实时模式只增量刷新当前 Session。长列表请求有界并使用虚拟化。
+
+API 位于 `/api/v1/`，全部要求 Bearer Token；现有状态、Session、原始 Event、详情和 SSE 接口保持兼容，并增加 Session summary、timeline 和 conversation 投影。列表默认 50 条、最多 200 条；timeline 不包含完整 payload，conversation 只包含有界预览并可回到源 Event。服务不启用 CORS，不加载 CDN/远程字体，也不提供 on/off、prune 或其他写操作。Trace 数据未经脱敏，仍应仅在可信本机浏览器中查看。
 
 默认数据目录：
 
@@ -117,7 +119,10 @@ V1 不自动删除、轮转、压缩或限制已提交数据，数据库会持�
 ## 开发与测试
 
 ```sh
-npm install
+npm install                 # prepare 会生成同源 Web 静态资源
+npm run dev:web             # 仅前端开发服务器；生产仍由 qb-trace server 提供
+npm run build:web
+npm run benchmark:web       # 生成 100,000 Event Session 并报告查询证据
 npm test
 npm run typecheck
 sh -n bin/qb-trace scripts/install-qb-trace-cli.sh

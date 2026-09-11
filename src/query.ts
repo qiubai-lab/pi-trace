@@ -1,3 +1,5 @@
+import { projectConversationEvents, projectTimelineEvents } from "./analysis/projections.ts";
+import type { ConversationItemDto, CursorPage, TimelineEventDto } from "./contracts.ts";
 import {
   TraceStore,
   type StoredControl,
@@ -10,7 +12,7 @@ import {
   type TraceSessionSummary,
 } from "./store.ts";
 
-export interface CursorPage<T> { items: T[]; nextCursor?: string; }
+export type { CursorPage } from "./contracts.ts";
 
 type Cursor =
   | { kind: "sessions"; lastTimestampMs: number; sessionId: string }
@@ -65,6 +67,35 @@ export class TraceQueryService {
     const last = items.at(-1);
     return {
       items,
+      nextCursor: rows.length > limit && last
+        ? encodeCursor({ kind: "events", timestampMs: last.timestampMs, eventId: last.eventId })
+        : undefined,
+    };
+  }
+
+  sessionSummary(sessionId: string): TraceSessionSummary | undefined { return this.store.getSessionSummary(sessionId); }
+
+  timeline(filters: TraceEventFilters, limit: number, cursorValue?: string): CursorPage<TimelineEventDto> {
+    const cursor = decodeCursor(cursorValue, "events") as Extract<Cursor, { kind: "events" }> | undefined;
+    const rows = this.store.listEventSummaries({ ...filters, after: cursor }, limit + 1, true);
+    const bounded = rows.slice(0, limit);
+    const last = bounded.at(-1);
+    return {
+      items: projectTimelineEvents(bounded),
+      nextCursor: rows.length > limit && last
+        ? encodeCursor({ kind: "events", timestampMs: last.timestampMs, eventId: last.eventId })
+        : undefined,
+    };
+  }
+
+  conversation(filters: TraceEventFilters, limit: number, cursorValue?: string): CursorPage<ConversationItemDto> {
+    const cursor = decodeCursor(cursorValue, "events") as Extract<Cursor, { kind: "events" }> | undefined;
+    const eventTypes = ["before_agent_start", "message_end", "tool_execution_start", "tool_result", "user_bash"];
+    const rows = this.store.listEventDetails({ ...filters, eventTypes, after: cursor }, limit + 1, true);
+    const bounded = rows.slice(0, limit);
+    const last = bounded.at(-1);
+    return {
+      items: projectConversationEvents(bounded),
       nextCursor: rows.length > limit && last
         ? encodeCursor({ kind: "events", timestampMs: last.timestampMs, eventId: last.eventId })
         : undefined,

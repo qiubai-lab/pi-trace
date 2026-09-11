@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "personal-skills": {
+      "remote": "https://gitea.in.qiubai.site/DOCUMENTS/my-skills.git",
+      "ref": "master",
+      "commit": "de60fbe1a4b88a11b9650b969c50076a5d655789",
+      "plugins": [
+        "apple-design-skills"
+      ]
+    }
+  },
+  "skills": {
+    "animation-vocabulary": {
+      "marketplace": "personal-skills",
+      "plugin": "apple-design-skills"
+    },
+    "apple-design": {
+      "marketplace": "personal-skills",
+      "plugin": "apple-design-skills"
+    },
+    "emil-design-eng": {
+      "marketplace": "personal-skills",
+      "plugin": "apple-design-skills"
+    },
+    "find-animation-opportunities": {
+      "marketplace": "personal-skills",
+      "plugin": "apple-design-skills"
+    },
+    "improve-animations": {
+      "marketplace": "personal-skills",
+      "plugin": "apple-design-skills"
+    },
+    "pick-ui-library": {
+      "marketplace": "personal-skills",
+      "plugin": "apple-design-skills"
+    },
+    "review-animations": {
+      "marketplace": "personal-skills",
+      "plugin": "apple-design-skills"
+    }
+  }
+}

@@ -29,11 +29,17 @@ describe("local Trace Web server", () => {
       expect(root.status).toBe(200);
       expect(root.headers.get("content-security-policy")).toContain("default-src 'self'");
       expect(root.headers.get("access-control-allow-origin")).toBeNull();
-      expect(await root.text()).toContain("Sensitive local data");
-      const app = await (await fetch(`http://127.0.0.1:${server.port}/app.js`)).text();
-      expect(app).toContain("sessionStorage.setItem('qb-trace-token'");
+      const html = await root.text();
+      expect(html).toContain("QB Trace");
+      const scriptPath = html.match(/src="([^"]+\.js)"/)?.[1];
+      const stylePath = html.match(/href="([^"]+\.css)"/)?.[1];
+      expect(scriptPath).toMatch(/^\/assets\//);
+      expect(stylePath).toMatch(/^\/assets\//);
+      const app = await (await fetch(`http://127.0.0.1:${server.port}${scriptPath}`)).text();
+      expect(app).toContain("qb-trace-token");
       expect(app).toContain("/api/v1/events/stream");
-      expect(app).not.toMatch(/https?:\/\//);
+      expect(app).toContain("Payloads are unredacted");
+      expect(html).not.toMatch(/(?:src|href)="https?:\/\//);
 
       expect((await fetch(`http://127.0.0.1:${server.port}/api/v1/status`)).status).toBe(401);
       const invalidHostStatus = await new Promise<number | undefined>((resolve, reject) => {
@@ -51,6 +57,14 @@ describe("local Trace Web server", () => {
       expect(stats.items[0]).toMatchObject({ eventType: "tool_result", eventCount: 1 });
       const sessions = await (await fetch(`http://127.0.0.1:${server.port}/api/v1/sessions?limit=1`, { headers })).json() as any;
       expect(sessions.items[0]).toMatchObject({ sessionId: "session-1", eventCount: 1 });
+      const summary = await (await fetch(`http://127.0.0.1:${server.port}/api/v1/sessions/session-1/summary`, { headers })).json() as any;
+      expect(summary).toMatchObject({ sessionId: "session-1", eventCount: 1, errors: 1 });
+      const timeline = await (await fetch(`http://127.0.0.1:${server.port}/api/v1/sessions/session-1/timeline?limit=1`, { headers })).json() as any;
+      expect(timeline.items[0]).toMatchObject({ eventType: "tool_result", runKey: expect.any(String), turnKey: expect.any(String) });
+      expect(timeline.items[0]).not.toHaveProperty("payloadJson");
+      const conversation = await (await fetch(`http://127.0.0.1:${server.port}/api/v1/sessions/session-1/conversation?limit=1`, { headers })).json() as any;
+      expect(conversation.items[0]).toMatchObject({ eventId: event.eventId, itemId: `${event.eventId}:result`, role: "tool", title: "Tool", toolStatus: "error", isError: true });
+      expect(conversation.items[0]).not.toHaveProperty("payloadJson");
       const events = await (await fetch(`http://127.0.0.1:${server.port}/api/v1/sessions/session-1/events?limit=1`, { headers })).json() as any;
       expect(events.items[0]).not.toHaveProperty("payloadJson");
       const detail = await (await fetch(`http://127.0.0.1:${server.port}/api/v1/events/${encodeURIComponent(event.eventId)}`, { headers })).json() as any;
