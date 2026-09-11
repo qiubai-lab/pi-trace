@@ -66,7 +66,11 @@ const page = {
   limit: 100,
   revision: 4,
   indexing: false,
-  groups: [],
+  groups: [
+    { id: "run-1", name: "Agent 运行", kind: "run" },
+    { id: "turn-1", name: "Turn 1", kind: "turn", parentId: "run-1" },
+    { id: "turn-2", name: "Turn 2", kind: "turn", parentId: "run-1" },
+  ],
   overview: {
     start: 100,
     end: 60000,
@@ -179,6 +183,9 @@ describe("execution workbench AC-002/003/007", () => {
     expect(
       await screen.findByRole("region", { name: "执行时间线" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("公共 hook + 显式埋点 · 跨运行时按观察时间排列"),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /read.*file.ts/ }));
     expect(
       await screen.findByText("recorded file content"),
@@ -203,6 +210,24 @@ describe("execution workbench AC-002/003/007", () => {
       await screen.findByRole("region", { name: "原始事件列表" }),
     ).toBeInTheDocument();
     expect(location.search).not.toContain("token");
+  });
+  it("keeps replay collapsed until the footer toggle opens it and collapses Agent runs", async () => {
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /project.*session-1/i }),
+    );
+    expect(screen.queryByLabelText("回放时间")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开历史回放" }));
+    expect(await screen.findByLabelText("回放时间")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "收起 Agent 运行" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "收起 Agent 运行" }));
+    expect(screen.getByRole("button", { name: "展开 Agent 运行" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByRole("button", { name: /Turn 1/ })).not.toBeInTheDocument();
   });
   it("opens a deep-linked inspector independently of the first rendered window", async () => {
     history.replaceState(null, "", "/?session=session-1&event=op-read");

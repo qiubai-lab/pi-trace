@@ -77,6 +77,7 @@ export function Playback({
   };
   return (
     <footer
+      id="history-playback"
       className={`playback ${at !== undefined ? "replaying" : ""}`}
       aria-label="历史回放控制"
     >
